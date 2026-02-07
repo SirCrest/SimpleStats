@@ -1,0 +1,29 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.5.2.0
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "native", "native", "{2F2BA0B1-8447-348E-8DA4-622F0257D38B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "SimpleStatsHelper", "native\SimpleStatsHelper\SimpleStatsHelper.csproj", "{0BC485AB-354B-5A2B-46CD-0FD1FC5347E4}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{0BC485AB-354B-5A2B-46CD-0FD1FC5347E4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0BC485AB-354B-5A2B-46CD-0FD1FC5347E4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0BC485AB-354B-5A2B-46CD-0FD1FC5347E4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0BC485AB-354B-5A2B-46CD-0FD1FC5347E4}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{0BC485AB-354B-5A2B-46CD-0FD1FC5347E4} = {2F2BA0B1-8447-348E-8DA4-622F0257D38B}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {5CC9688E-D6DA-4BD4-BE84-BAF30109C183}
+	EndGlobalSection
+EndGlobal

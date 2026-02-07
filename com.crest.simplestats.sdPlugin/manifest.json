@@ -1,0 +1,138 @@
+{
+  "$schema": "https://schemas.elgato.com/streamdeck/plugins/manifest.json",
+  "Name": "SimpleStats",
+  "Author": "Crest",
+  "Description": "Task Manager-style system stats for Stream Deck keys.",
+  "Version": "0.2.0.0",
+  "UUID": "com.crest.simplestats",
+  "SDKVersion": 2,
+  "Software": {
+    "MinimumVersion": "6.9"
+  },
+  "OS": [
+    {
+      "Platform": "windows",
+      "MinimumVersion": "10"
+    }
+  ],
+  "Nodejs": {
+    "Version": "20"
+  },
+  "Icon": "imgs/plugin/icon",
+  "Category": "SimpleStats",
+  "CategoryIcon": "imgs/plugin/category",
+  "CodePath": "bin/plugin.js",
+  "Actions": [
+    {
+      "UUID": "com.crest.simplestats.metric",
+      "Name": "Metric Display",
+      "Icon": "imgs/actions/metric",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/actions/metric",
+          "Title": "STAT"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.stat",
+      "Name": "Legacy Stat",
+      "Icon": "imgs/actions/metric",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "VisibleInActionsList": false,
+      "States": [
+        {
+          "Image": "imgs/actions/metric",
+          "Title": "STAT"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.cpu",
+      "Name": "Legacy CPU",
+      "Icon": "imgs/actions/cpu",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "VisibleInActionsList": false,
+      "States": [
+        {
+          "Image": "imgs/actions/cpu",
+          "Title": "CPU"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.gpu",
+      "Name": "Legacy GPU",
+      "Icon": "imgs/actions/gpu",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "VisibleInActionsList": false,
+      "States": [
+        {
+          "Image": "imgs/actions/gpu",
+          "Title": "GPU"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.gputemp",
+      "Name": "Legacy GPU Temp",
+      "Icon": "imgs/actions/gputemp",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "VisibleInActionsList": false,
+      "States": [
+        {
+          "Image": "imgs/actions/gputemp",
+          "Title": "GTMP"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.memory",
+      "Name": "Legacy Memory",
+      "Icon": "imgs/actions/memory",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "VisibleInActionsList": false,
+      "States": [
+        {
+          "Image": "imgs/actions/memory",
+          "Title": "MEM"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.disk",
+      "Name": "Legacy Disk",
+      "Icon": "imgs/actions/disk",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "VisibleInActionsList": false,
+      "States": [
+        {
+          "Image": "imgs/actions/disk",
+          "Title": "DSK"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.network",
+      "Name": "Legacy Network",
+      "Icon": "imgs/actions/network",
+      "PropertyInspectorPath": "ui/property-inspector.html",
+      "UserTitleEnabled": false,
+      "VisibleInActionsList": false,
+      "States": [
+        {
+          "Image": "imgs/actions/network",
+          "Title": "NET"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\publish\SimpleStatsHelper.pdb
+C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\publish\SimpleStatsHelper.exe
