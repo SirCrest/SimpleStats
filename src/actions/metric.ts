@@ -150,6 +150,7 @@ type ActionState = {
   lastRawMetric?: string;
   lastRawGroup?: string;
   lastRenderAt?: number;
+  diskSpaceWarmupComplete?: boolean;
 };
 
 type MetricDisplay = {
@@ -377,6 +378,10 @@ function intervalMsForSettings(settings: NormalizedSettings): number {
   return settings.group === "disk" && (settings.metric === "disk-used" || settings.metric === "disk-free")
     ? 60_000
     : Math.max(1, settings.pollIntervalSec) * 1000;
+}
+
+function isDiskSpaceMetric(settings: NormalizedSettings): boolean {
+  return settings.group === "disk" && (settings.metric === "disk-used" || settings.metric === "disk-free");
 }
 
 function historyCacheBaseKey(action: KeyAction<Settings>): string {
@@ -1298,6 +1303,13 @@ export class MetricAction extends SingletonAction<Settings> {
     state.unsubscribe = statsPoller.subscribe((snapshot) => {
       this.updateAction(action, state, snapshot);
     });
+    if (isDiskSpaceMetric(state.settings)) {
+      void statsPoller.refreshNow({ forceGroups: ["disk"] })
+        .then((snapshot) => {
+          this.updateAction(action, state, snapshot, true);
+        })
+        .catch(() => undefined);
+    }
     void this.refreshSettings(action);
   }
 
@@ -1434,7 +1446,8 @@ export class MetricAction extends SingletonAction<Settings> {
         cacheKeyBase,
         cacheKey,
         settingsReady: canRestoreHistory,
-        history: new HistorySeries(historyPointsForInterval(normalized.pollIntervalSec))
+        history: new HistorySeries(historyPointsForInterval(normalized.pollIntervalSec)),
+        diskSpaceWarmupComplete: false
       };
       if (background && background.settingsKey === nextKey) {
         state.history = background.history;
@@ -1487,6 +1500,9 @@ export class MetricAction extends SingletonAction<Settings> {
     if (canRestoreHistory) {
       existing.settingsReady = true;
     }
+    if (!isDiskSpaceMetric(existing.settings)) {
+      existing.diskSpaceWarmupComplete = false;
+    }
     if (settings?.metric !== undefined) existing.lastRawMetric = String(settings.metric);
     if (settings?.group !== undefined) existing.lastRawGroup = String(settings.group);
     this.statesById.set(actionInstance.id, existing);
@@ -1511,10 +1527,19 @@ export class MetricAction extends SingletonAction<Settings> {
 
     const now = Date.now();
     const intervalMs = intervalMsForSettings(state.settings);
+    const diskSpaceMetric = isDiskSpaceMetric(state.settings);
+    const allowDiskWarmupRender =
+      !force &&
+      diskSpaceMetric &&
+      !state.diskSpaceWarmupComplete &&
+      (() => {
+        const disk = selectDisk(snapshot, state.settings.diskId);
+        return typeof disk?.usePct === "number" && Number.isFinite(disk.usePct);
+      })();
     if (state.history.setMaxPoints(historyPointsForInterval(intervalMs / 1000))) {
       state.history.clear();
     }
-    if (!force) {
+    if (!force && !allowDiskWarmupRender) {
       if (typeof state.lastRenderAt === "number" && now - state.lastRenderAt < intervalMs) {
         return;
       }
@@ -1522,6 +1547,9 @@ export class MetricAction extends SingletonAction<Settings> {
     state.lastRenderAt = now;
 
     const display = buildMetricDisplay(snapshot, state.settings);
+    if (diskSpaceMetric && typeof display.graphValue === "number" && Number.isFinite(display.graphValue)) {
+      state.diskSpaceWarmupComplete = true;
+    }
     state.history.push(display.graphValue);
     saveHistoryToCache(state, actionInstance.id);
     const showDebug = ALWAYS_DEBUG;
@@ -1666,4 +1694,3 @@ export class LegacyDiskAction extends MetricAction {}
 
 @action({ UUID: "com.crest.simplestats.network" })
 export class LegacyNetworkAction extends MetricAction {}
-
