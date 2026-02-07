@@ -1,0 +1,101 @@
+﻿<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="sdpi-components.js"></script>
+    <link rel="stylesheet" href="property-inspector.css" />
+    <title>SimpleStats</title>
+  </head>
+  <body>
+    <sdpi-item label="Device">
+      <sdpi-select id="group" setting="group">
+        <option value="cpu">CPU</option>
+        <option value="gpu">GPU</option>
+        <option value="memory">Memory</option>
+        <option value="disk">Disk</option>
+        <option value="network">Network</option>
+        <option value="system">System</option>
+      </sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="metric-row" label="Metric">
+      <sdpi-select id="metric" setting="metric"></sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="poll-row" label="Polling">
+      <sdpi-select id="poll-interval" setting="pollIntervalSec">
+        <option value="1">1 sec</option>
+        <option value="2">2 sec</option>
+        <option value="3">3 sec</option>
+        <option value="4">4 sec</option>
+        <option value="5">5 sec</option>
+      </sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="cpu-mode-row" label="CPU Mode">
+      <sdpi-checkbox id="cpu-per-core" setting="cpuPerCore" label="Per-Core"></sdpi-checkbox>
+    </sdpi-item>
+
+    <sdpi-item id="cpu-core-row" label="CPU Core">
+      <div class="cpu-core-controls">
+        <sdpi-button id="cpu-core-down">-</sdpi-button>
+        <sdpi-textfield id="cpu-core" setting="cpuCore" type="number" placeholder="1"></sdpi-textfield>
+        <sdpi-button id="cpu-core-up">+</sdpi-button>
+      </div>
+    </sdpi-item>
+
+    <sdpi-item id="gpu-row" label="GPU">
+      <select id="gpu" class="sdpi-item-value"></select>
+    </sdpi-item>
+
+    <sdpi-item id="disk-row" label="Disk">
+      <div class="select-with-refresh">
+        <select id="disk" class="sdpi-item-value"></select>
+        <button id="rescan-disks" class="refresh-btn" title="Rescan disks" aria-label="Rescan disks">&#8635;</button>
+      </div>
+    </sdpi-item>
+
+    <sdpi-item id="disk-space-note">
+      <div class="help-text">Disk space updates every 60 seconds.</div>
+    </sdpi-item>
+
+    <sdpi-item id="net-row" label="Interface">
+      <div class="select-with-refresh">
+        <select id="net" class="sdpi-item-value"></select>
+        <button id="rescan-interfaces" class="refresh-btn" title="Rescan interfaces" aria-label="Rescan interfaces">&#8635;</button>
+      </div>
+    </sdpi-item>
+
+    <sdpi-item id="net-period-row" label="Transfer Period">
+      <sdpi-select id="net-period" setting="netPeriodSec">
+        <option value="60">Last 60 seconds</option>
+        <option value="3600">Last 60 minutes</option>
+        <option value="86400">Last 24 hours</option>
+      </sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="net-total-note">
+      <div class="help-text">Totals are recorded only when the Stream Deck app is active.</div>
+    </sdpi-item>
+
+    <sdpi-item id="warn-threshold-row" label="Alert %">
+      <sdpi-textfield id="warn-threshold" type="number" placeholder="0 (off)"></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item id="threshold-note">
+      <div class="help-text">Value text and graph line turn orange when above threshold.</div>
+    </sdpi-item>
+
+    <sdpi-item id="top-threshold-row" label="Idle below">
+      <sdpi-textfield id="top-threshold" type="number" placeholder="5"></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item id="top-threshold-note">
+      <div class="help-text">Shows IDLE when top process is below this %. 0 to disable.</div>
+    </sdpi-item>
+
+    <script src="property-inspector.js"></script>
+  </body>
+</html>
+

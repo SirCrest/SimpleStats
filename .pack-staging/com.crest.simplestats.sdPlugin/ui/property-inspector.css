@@ -1,0 +1,100 @@
+:root {
+  color-scheme: dark;
+}
+
+body {
+  color: #f2f2f2;
+}
+
+.cpu-core-controls {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 32px 1fr 32px;
+}
+
+.cpu-core-controls sdpi-button {
+  min-width: 32px;
+  width: 32px;
+}
+.help-text {
+  color: #b3b3b3;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.2px;
+}
+
+/* Style plain select elements to match sdpi-select */
+select.sdpi-item-value {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #3d3d3d;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='4' viewBox='0 0 8 4'%3E%3Cpath fill='%23999' d='M0 0l4 4 4-4z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  border: none;
+  border-radius: 3px;
+  box-sizing: border-box;
+  color: #d8d8d8;
+  font-family: inherit;
+  font-size: 12px;
+  height: 26px;
+  line-height: 26px;
+  padding: 0 24px 0 8px;
+  width: 100%;
+}
+
+select.sdpi-item-value:hover {
+  background-color: #464646;
+}
+
+select.sdpi-item-value:focus {
+  background-color: #464646;
+  outline: none;
+  box-shadow: 0 0 0 1px #0078d4;
+}
+
+select.sdpi-item-value option {
+  background-color: #3d3d3d;
+  color: #d8d8d8;
+}
+
+/* Select with inline refresh button */
+.select-with-refresh {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.select-with-refresh select {
+  flex: 1;
+  min-width: 0;
+}
+
+.refresh-btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #3d3d3d;
+  border: none;
+  border-radius: 3px;
+  color: #999;
+  cursor: pointer;
+  font-size: 14px;
+  height: 26px;
+  width: 26px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.refresh-btn:hover {
+  background-color: #464646;
+  color: #d8d8d8;
+}
+
+.refresh-btn:active {
+  background-color: #505050;
+}

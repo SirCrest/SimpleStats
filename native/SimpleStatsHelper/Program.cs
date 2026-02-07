@@ -4,7 +4,7 @@ using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
+
 
 namespace SimpleStatsHelper;
 
@@ -70,239 +70,330 @@ public sealed record NetPayload(
 
 internal sealed class CpuSampler
 {
-  private PerformanceCounter? _total;
-  private readonly List<(int index, PerformanceCounter counter)> _cores = new();
-  private bool _initialized;
+  [StructLayout(LayoutKind.Sequential)]
+  private struct SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION
+  {
+    public long IdleTime;
+    public long KernelTime;  // Includes idle
+    public long UserTime;
+    public long DpcTime;
+    public long InterruptTime;
+    public uint InterruptCount;
+  }
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern bool GetSystemTimes(out long idleTime, out long kernelTime, out long userTime);
+
+  [DllImport("ntdll.dll")]
+  private static extern int NtQuerySystemInformation(int systemInformationClass,
+    [Out] SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION[] buffer, int bufferSize, out int returnLength);
+
+  private const int SystemProcessorPerformanceInformation = 8;
+  private readonly int _processorCount = Environment.ProcessorCount;
+
+  private long _prevIdle, _prevKernel, _prevUser;
+  private long[]? _prevCoreIdle, _prevCoreKernel, _prevCoreUser;
+  private bool _hasBaseline;
 
   public CpuPayload? Sample()
   {
-    if (!EnsureInitialized()) return null;
-    double? total = TryNextValue(_total);
-    var cores = new List<double>();
-    foreach (var entry in _cores)
-    {
-      var value = TryNextValue(entry.counter);
-      cores.Add(value ?? 0d);
-    }
-    return new CpuPayload(total, cores);
-  }
-
-  private bool EnsureInitialized()
-  {
-    if (_initialized) return _total != null;
-    _initialized = true;
     try
     {
-      var category = new PerformanceCounterCategory("Processor");
-      var instances = category.GetInstanceNames();
-      foreach (var instance in instances)
+      if (!GetSystemTimes(out long idle, out long kernel, out long user))
+        return null;
+
+      var coreInfo = new SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION[_processorCount];
+      int bufferSize = _processorCount * Marshal.SizeOf<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>();
+      int status = NtQuerySystemInformation(SystemProcessorPerformanceInformation, coreInfo, bufferSize, out int returnLength);
+      int actualCores = status == 0 ? returnLength / Marshal.SizeOf<SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION>() : 0;
+
+      if (!_hasBaseline)
       {
-        if (string.Equals(instance, "_Total", StringComparison.OrdinalIgnoreCase))
+        _hasBaseline = true;
+        _prevIdle = idle; _prevKernel = kernel; _prevUser = user;
+        if (actualCores > 0)
         {
-          _total = new PerformanceCounter("Processor", "% Processor Time", instance, true);
-          continue;
+          _prevCoreIdle = new long[actualCores];
+          _prevCoreKernel = new long[actualCores];
+          _prevCoreUser = new long[actualCores];
+          for (int i = 0; i < actualCores; i++)
+          {
+            _prevCoreIdle[i] = coreInfo[i].IdleTime;
+            _prevCoreKernel[i] = coreInfo[i].KernelTime;
+            _prevCoreUser[i] = coreInfo[i].UserTime;
+          }
         }
-        if (int.TryParse(instance, out int index))
+        return new CpuPayload(null, new List<double>());
+      }
+
+      // Total CPU
+      double? total = ComputeCpuPct(idle - _prevIdle, kernel - _prevKernel, user - _prevUser);
+
+      // Per-core CPU
+      var cores = new List<double>();
+      if (actualCores > 0 && _prevCoreIdle != null && _prevCoreKernel != null && _prevCoreUser != null)
+      {
+        int count = Math.Min(actualCores, _prevCoreIdle.Length);
+        for (int i = 0; i < count; i++)
         {
-          _cores.Add((index, new PerformanceCounter("Processor", "% Processor Time", instance, true)));
+          double? corePct = ComputeCpuPct(
+            coreInfo[i].IdleTime - _prevCoreIdle[i],
+            coreInfo[i].KernelTime - _prevCoreKernel[i],
+            coreInfo[i].UserTime - _prevCoreUser[i]);
+          cores.Add(corePct ?? 0d);
+        }
+
+        // Update per-core baselines (resize if needed)
+        if (actualCores != _prevCoreIdle.Length)
+        {
+          _prevCoreIdle = new long[actualCores];
+          _prevCoreKernel = new long[actualCores];
+          _prevCoreUser = new long[actualCores];
+        }
+        for (int i = 0; i < actualCores; i++)
+        {
+          _prevCoreIdle[i] = coreInfo[i].IdleTime;
+          _prevCoreKernel[i] = coreInfo[i].KernelTime;
+          _prevCoreUser[i] = coreInfo[i].UserTime;
         }
       }
-      _cores.Sort((a, b) => a.index.CompareTo(b.index));
-      return _total != null;
-    }
-    catch
-    {
-      return false;
-    }
-  }
 
-  public void Warmup()
-  {
-    if (!EnsureInitialized()) return;
-    TryNextValue(_total);
-    foreach (var (_, counter) in _cores)
-      TryNextValue(counter);
-  }
-
-  private static double? TryNextValue(PerformanceCounter? counter)
-  {
-    if (counter == null) return null;
-    try
-    {
-      return counter.NextValue();
+      _prevIdle = idle; _prevKernel = kernel; _prevUser = user;
+      return new CpuPayload(total, cores);
     }
     catch
     {
       return null;
     }
+  }
+
+  private static double? ComputeCpuPct(long deltaIdle, long deltaKernel, long deltaUser)
+  {
+    long deltaTotal = deltaKernel + deltaUser;
+    if (deltaTotal <= 0) return null;
+    double pct = (deltaTotal - deltaIdle) / (double)deltaTotal * 100.0;
+    return Math.Round(Math.Clamp(pct, 0, 100), 1);
   }
 }
 
 internal sealed class DiskPerfSampler
 {
-  private sealed class DiskCounters
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  private struct DISK_PERFORMANCE
   {
-    public DiskCounters(string instance, List<string> ids, PerformanceCounter active, PerformanceCounter read, PerformanceCounter write)
-    {
-      Instance = instance;
-      Ids = ids;
-      Active = active;
-      Read = read;
-      Write = write;
-    }
-
-    public string Instance { get; }
-    public List<string> Ids { get; }
-    public PerformanceCounter Active { get; }
-    public PerformanceCounter Read { get; }
-    public PerformanceCounter Write { get; }
-
-    public void Dispose()
-    {
-      try { Active.Dispose(); } catch { }
-      try { Read.Dispose(); } catch { }
-      try { Write.Dispose(); } catch { }
-    }
+    public long BytesRead;
+    public long BytesWritten;
+    public long ReadTime;
+    public long WriteTime;
+    public long IdleTime;
+    public uint ReadCount;
+    public uint WriteCount;
+    public uint QueueDepth;
+    public uint SplitCount;
+    public long QueryTime;
+    public uint StorageDeviceNumber;
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 8)]
+    public string StorageManagerName;
   }
 
-  private readonly List<DiskCounters> _items = new();
-  private DiskCounters? _total;
+  [StructLayout(LayoutKind.Sequential)]
+  private struct STORAGE_DEVICE_NUMBER
+  {
+    public uint DeviceType;
+    public uint DeviceNumber;
+    public int PartitionNumber;
+  }
+
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  private static extern IntPtr CreateFileW(string lpFileName, uint dwDesiredAccess,
+    uint dwShareMode, IntPtr lpSecurityAttributes, uint dwCreationDisposition,
+    uint dwFlagsAndAttributes, IntPtr hTemplateFile);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern bool DeviceIoControl(IntPtr hDevice, uint dwIoControlCode,
+    IntPtr lpInBuffer, uint nInBufferSize, out DISK_PERFORMANCE lpOutBuffer,
+    uint nOutBufferSize, out uint lpBytesReturned, IntPtr lpOverlapped);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern bool DeviceIoControl(IntPtr hDevice, uint dwIoControlCode,
+    IntPtr lpInBuffer, uint nInBufferSize, out STORAGE_DEVICE_NUMBER lpOutBuffer,
+    uint nOutBufferSize, out uint lpBytesReturned, IntPtr lpOverlapped);
+
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern bool CloseHandle(IntPtr hObject);
+
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  private static extern uint GetLogicalDriveStringsW(uint nBufferLength, [Out] char[] lpBuffer);
+
+  private const uint FILE_SHARE_READ = 0x01;
+  private const uint FILE_SHARE_WRITE = 0x02;
+  private const uint OPEN_EXISTING = 3;
+  private const uint IOCTL_DISK_PERFORMANCE = 0x00070020;
+  private const uint IOCTL_STORAGE_GET_DEVICE_NUMBER = 0x002D1080;
+  private static readonly IntPtr INVALID_HANDLE_VALUE = new IntPtr(-1);
+
+  // Physical drive # -> list of drive letters ("C:", "D:")
+  private Dictionary<uint, List<string>> _driveMap = new();
+  private List<uint> _physicalDrives = new();
   private long _lastRescanMs;
+
+  // Previous sample state per physical drive
+  private Dictionary<uint, DISK_PERFORMANCE>? _prev;
+  private long _prevTickMs;
+  private bool _hasBaseline;
 
   public DiskPerfPayload? Sample(long nowMs)
   {
-    if (_items.Count == 0 || nowMs - _lastRescanMs > 60000)
+    if (_physicalDrives.Count == 0 || nowMs - _lastRescanMs > 60000)
     {
-      Refresh(nowMs);
+      RescanDrives(nowMs);
     }
 
-    if (_items.Count == 0 && _total == null) return null;
+    if (_physicalDrives.Count == 0) return null;
 
-    var list = new List<DiskPerfItem>();
-    DiskPerfItem? totalItem = null;
-
-    if (_total != null)
+    // Read current DISK_PERFORMANCE for each physical drive
+    var current = new Dictionary<uint, DISK_PERFORMANCE>();
+    foreach (var driveNum in _physicalDrives)
     {
-      totalItem = ReadCounter(_total, "_Total");
+      var perf = ReadDiskPerformance(driveNum);
+      if (perf.HasValue)
+        current[driveNum] = perf.Value;
     }
 
-    foreach (var counter in _items)
+    if (current.Count == 0) return null;
+
+    if (!_hasBaseline || _prev == null)
     {
-      var item = ReadCounter(counter, counter.Ids.Count > 0 ? counter.Ids[0] : counter.Instance);
-      if (item == null) continue;
-      if (counter.Ids.Count <= 1)
+      _hasBaseline = true;
+      _prev = current;
+      _prevTickMs = nowMs;
+      return null;
+    }
+
+    double elapsedSec = (nowMs - _prevTickMs) / 1000.0;
+    if (elapsedSec <= 0) elapsedSec = 1.0;
+
+    var items = new List<DiskPerfItem>();
+    long totalDeltaBytesRead = 0, totalDeltaBytesWritten = 0;
+    long totalDeltaActive = 0, totalDeltaQuery = 0;
+
+    foreach (var (driveNum, curr) in current)
+    {
+      if (!_prev.TryGetValue(driveNum, out var prev)) continue;
+
+      long dBytesRead = curr.BytesRead - prev.BytesRead;
+      long dBytesWritten = curr.BytesWritten - prev.BytesWritten;
+      long dQuery = curr.QueryTime - prev.QueryTime;
+      long dIdle = curr.IdleTime - prev.IdleTime;
+      long dActive = dQuery > 0 ? dQuery - dIdle : 0;
+
+      double? activePct = dQuery > 0
+        ? Math.Round(Math.Clamp(dActive / (double)dQuery * 100.0, 0, 100), 1)
+        : 0;
+      double readBps = dBytesRead / elapsedSec;
+      double writeBps = dBytesWritten / elapsedSec;
+
+      totalDeltaBytesRead += dBytesRead;
+      totalDeltaBytesWritten += dBytesWritten;
+      totalDeltaActive += dActive;
+      totalDeltaQuery += dQuery;
+
+      // Emit one DiskPerfItem per drive letter mapped to this physical drive
+      if (_driveMap.TryGetValue(driveNum, out var letters))
       {
-        list.Add(item);
-      }
-      else
-      {
-        foreach (var id in counter.Ids)
-        {
-          list.Add(item with { id = id });
-        }
+        foreach (var letter in letters)
+          items.Add(new DiskPerfItem(letter, activePct, readBps, writeBps));
       }
     }
 
-    return new DiskPerfPayload(totalItem, list);
+    // _Total across all drives
+    double? totalActivePct = totalDeltaQuery > 0
+      ? Math.Round(Math.Clamp(totalDeltaActive / (double)totalDeltaQuery * 100.0, 0, 100), 1)
+      : 0;
+    var totalItem = new DiskPerfItem("_Total", totalActivePct,
+      totalDeltaBytesRead / elapsedSec, totalDeltaBytesWritten / elapsedSec);
+
+    _prev = current;
+    _prevTickMs = nowMs;
+    return new DiskPerfPayload(totalItem, items);
   }
 
-  public void Warmup(long nowMs)
+  private void RescanDrives(long nowMs)
   {
-    Refresh(nowMs);
-    if (_total != null)
-    {
-      TryNextValue(_total.Active);
-      TryNextValue(_total.Read);
-      TryNextValue(_total.Write);
-    }
-    foreach (var item in _items)
-    {
-      TryNextValue(item.Active);
-      TryNextValue(item.Read);
-      TryNextValue(item.Write);
-    }
-  }
-
-  private void Refresh(long nowMs)
-  {
-    foreach (var item in _items)
-    {
-      item.Dispose();
-    }
-    _items.Clear();
-    _total?.Dispose();
-    _total = null;
+    var newMap = new Dictionary<uint, List<string>>();
+    var newDrives = new HashSet<uint>();
 
     try
     {
-      var category = new PerformanceCounterCategory("PhysicalDisk");
-      var instances = category.GetInstanceNames();
-      foreach (var instance in instances)
+      // Map drive letters to physical drive numbers
+      var buf = new char[1024];
+      uint len = GetLogicalDriveStringsW((uint)buf.Length, buf);
+      if (len > 0)
       {
-        if (string.Equals(instance, "_Total", StringComparison.OrdinalIgnoreCase))
+        var all = new string(buf, 0, (int)len);
+        foreach (var root in all.Split('\0', StringSplitOptions.RemoveEmptyEntries))
         {
-          _total = CreateCounters(instance, new List<string> { "_Total" });
-          continue;
-        }
+          var letter = root.TrimEnd('\\');
+          if (letter.Length < 2 || letter[1] != ':') continue;
+          var id = letter.ToUpperInvariant();
 
-        var ids = ExtractDriveIds(instance);
-        if (ids.Count == 0)
-        {
-          continue;
+          var handle = CreateFileW($@"\\.\{id}", 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+          if (handle == INVALID_HANDLE_VALUE) continue;
+
+          try
+          {
+            if (DeviceIoControl(handle, IOCTL_STORAGE_GET_DEVICE_NUMBER, IntPtr.Zero, 0,
+                out STORAGE_DEVICE_NUMBER sdn, (uint)Marshal.SizeOf<STORAGE_DEVICE_NUMBER>(),
+                out _, IntPtr.Zero))
+            {
+              newDrives.Add(sdn.DeviceNumber);
+              if (!newMap.TryGetValue(sdn.DeviceNumber, out var list))
+              {
+                list = new List<string>();
+                newMap[sdn.DeviceNumber] = list;
+              }
+              if (!list.Contains(id)) list.Add(id);
+            }
+          }
+          finally { CloseHandle(handle); }
         }
-        var counters = CreateCounters(instance, ids);
-        _items.Add(counters);
+      }
+
+      // Also probe PhysicalDrive0..15 for drives without letters
+      for (uint i = 0; i <= 15; i++)
+      {
+        var handle = CreateFileW($@"\\.\PhysicalDrive{i}", 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+          IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+        if (handle == INVALID_HANDLE_VALUE) continue;
+        CloseHandle(handle);
+        newDrives.Add(i);
       }
     }
-    catch
-    {
-      // Ignore perf counter errors.
-    }
+    catch { }
 
+    _driveMap = newMap;
+    _physicalDrives = newDrives.OrderBy(x => x).ToList();
     _lastRescanMs = nowMs;
   }
 
-  private static DiskCounters CreateCounters(string instance, List<string> ids)
+  private static DISK_PERFORMANCE? ReadDiskPerformance(uint driveNumber)
   {
-    var active = new PerformanceCounter("PhysicalDisk", "% Disk Time", instance, true);
-    var read = new PerformanceCounter("PhysicalDisk", "Disk Read Bytes/sec", instance, true);
-    var write = new PerformanceCounter("PhysicalDisk", "Disk Write Bytes/sec", instance, true);
-    return new DiskCounters(instance, ids, active, read, write);
-  }
+    var handle = CreateFileW($@"\\.\PhysicalDrive{driveNumber}", 0,
+      FILE_SHARE_READ | FILE_SHARE_WRITE, IntPtr.Zero, OPEN_EXISTING, 0, IntPtr.Zero);
+    if (handle == INVALID_HANDLE_VALUE) return null;
 
-  private static DiskPerfItem? ReadCounter(DiskCounters counter, string id)
-  {
-    double? active = TryNextValue(counter.Active);
-    double? read = TryNextValue(counter.Read);
-    double? write = TryNextValue(counter.Write);
-    if (active == null && read == null && write == null) return null;
-    return new DiskPerfItem(id, active, read, write);
-  }
-
-  private static double? TryNextValue(PerformanceCounter counter)
-  {
     try
     {
-      return counter.NextValue();
-    }
-    catch
-    {
+      if (DeviceIoControl(handle, IOCTL_DISK_PERFORMANCE, IntPtr.Zero, 0,
+          out DISK_PERFORMANCE perf, (uint)Marshal.SizeOf<DISK_PERFORMANCE>(),
+          out _, IntPtr.Zero))
+      {
+        return perf;
+      }
       return null;
     }
-  }
-
-  private static List<string> ExtractDriveIds(string instance)
-  {
-    var ids = new List<string>();
-    foreach (Match match in Regex.Matches(instance, "[A-Z]:", RegexOptions.IgnoreCase))
-    {
-      var value = match.Value.ToUpperInvariant();
-      if (!ids.Contains(value))
-      {
-        ids.Add(value);
-      }
-    }
-    return ids;
+    finally { CloseHandle(handle); }
   }
 }
 
@@ -1006,8 +1097,20 @@ internal static class Program
 
       var mem = memSampler.Sample();
 
-      var payload = new NetPayload(now, items, disks, cpu, diskPerf, mem, gpus, topProcess);
-      Console.WriteLine(JsonSerializer.Serialize(payload, options));
+      try
+      {
+        var payload = new NetPayload(now, items, disks, cpu, diskPerf, mem, gpus, topProcess);
+        Console.WriteLine(JsonSerializer.Serialize(payload, options));
+      }
+      catch (Exception ex)
+      {
+        var message = ex.Message ?? string.Empty;
+        if (message.Length > 300)
+        {
+          message = message[..300];
+        }
+        Console.Error.WriteLine($"[SimpleStatsHelper] serialize error type={ex.GetType().Name} message={message}");
+      }
       firstLoop = false;
 
       try

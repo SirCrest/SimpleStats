@@ -387,8 +387,13 @@ function parseNumberFromUnknown(value: unknown): number | null {
   return null;
 }
 
+type StopReason = "manual" | "startup-timeout" | "stale-timeout" | "child-error" | "spawn-failed" | "unexpected-exit";
+let helperInvalidItemsTypeLogged = false;
+
 class SimpleStatsHelper {
   private static readonly MAX_BUFFER_SIZE = 65536;
+  private static readonly MAX_RETRY_DELAY_MS = 60_000;
+  private static readonly MAX_PARSE_ERROR_LOGS = 3;
   private child: ReturnType<typeof spawn> | null = null;
   private buffer = "";
   private disabled = false;
@@ -399,6 +404,10 @@ class SimpleStatsHelper {
   private helperPath: string | null = null;
   private retryAfter = 0;
   private snapshotCount = 0;
+  private failureCount = 0;
+  private expectedExitPid: number | null = null;
+  private lastStopReason: StopReason = "manual";
+  private parseErrorCount = 0;
 
   ensureRunning(): boolean {
     if (this.disabled) return false;
@@ -418,51 +427,98 @@ class SimpleStatsHelper {
     }
 
     try {
-      this.child = spawn(
+      const child = spawn(
         this.helperPath,
         ["--interval", String(HELPER_INTERVAL_MS)],
         { windowsHide: true }
       );
+      this.child = child;
       this.startedAt = Date.now();
       this.snapshotCount = 0;
-      writePerfLog("helperStarted", { path: this.helperPath, pid: this.child.pid });
-    } catch {
-      this.disabled = true;
+      this.lastStopReason = "manual";
+      this.expectedExitPid = null;
+      writePerfLog("helperStarted", { path: this.helperPath, pid: child.pid });
+    } catch (err) {
       this.child = null;
+      this.scheduleRetry("spawn-failed");
+      writePerfLog("helperProcessError", {
+        reason: "spawn-failed",
+        error: String(err),
+        retryDelayMs: this.retryAfter > 0 ? this.retryAfter - Date.now() : 0,
+        failureCount: this.failureCount
+      });
       return false;
     }
 
-    if (!this.child?.stdout) {
-      this.disabled = true;
+    const child = this.child;
+    if (!child?.stdout) {
       this.child = null;
+      this.scheduleRetry("spawn-failed");
+      writePerfLog("helperProcessError", {
+        reason: "spawn-failed",
+        error: "stdout unavailable",
+        retryDelayMs: this.retryAfter > 0 ? this.retryAfter - Date.now() : 0,
+        failureCount: this.failureCount
+      });
       return false;
     }
 
-    this.child.stdout.on("data", (chunk) => this.handleChunk(chunk));
-    this.child.stderr?.on("data", (chunk) => {
+    child.stdout.on("data", (chunk) => this.handleChunk(chunk));
+    child.stderr?.on("data", (chunk) => {
       writePerfLog("helperStderr", { message: chunk.toString().trim() });
     });
-    this.child.on("error", () => {
-      this.disabled = true;
-      this.stop();
+    child.on("error", (err) => {
+      if (this.child !== child) return;
+      this.scheduleRetry("child-error");
+      writePerfLog("helperProcessError", {
+        reason: "child-error",
+        pid: child.pid,
+        error: String(err),
+        retryDelayMs: this.retryAfter > 0 ? this.retryAfter - Date.now() : 0,
+        failureCount: this.failureCount
+      });
+      this.stop("child-error");
     });
-    this.child.on("exit", () => {
-      this.child = null;
+    child.on("exit", (code, signal) => {
+      const pid = child.pid ?? null;
+      const expected = pid !== null && this.expectedExitPid === pid;
+      const reason = expected ? this.lastStopReason : "unexpected-exit";
+      if (expected) {
+        this.expectedExitPid = null;
+      }
+      if (this.child === child) {
+        this.child = null;
+      }
+      if (!expected) {
+        this.scheduleRetry("unexpected-exit");
+      }
+      writePerfLog("helperExit", {
+        pid,
+        code,
+        signal,
+        expected,
+        reason,
+        retryDelayMs: !expected && this.retryAfter > 0 ? this.retryAfter - Date.now() : 0,
+        failureCount: this.failureCount,
+        snapshotCount: this.snapshotCount
+      });
     });
 
     return true;
   }
 
-  stop(): void {
+  stop(reason: StopReason = "manual"): void {
     if (this.child) {
       const proc = this.child;
       this.child = null;
+      this.lastStopReason = reason;
+      this.expectedExitPid = proc.pid ?? null;
       try {
         proc.kill();
       } catch {
         // already dead
       }
-      writePerfLog("helperStopped", { pid: proc.pid });
+      writePerfLog("helperStopped", { pid: proc.pid, reason });
     }
   }
 
@@ -476,26 +532,57 @@ class SimpleStatsHelper {
     if (!this.child) return true;
     if (this.lastSampleAt > 0) {
       if (now - this.lastSampleAt > HELPER_STALE_MS) {
+        const lastSampleAgeMs = now - this.lastSampleAt;
         this.latest = null;
         this.isPrimed = false;
         this.lastSampleAt = 0;
         this.startedAt = 0;
-        this.retryAfter = now + HELPER_RETRY_DELAY_MS;
-        this.stop();
+        this.scheduleRetry("stale-timeout", now);
+        writePerfLog("helperStaleTimeout", {
+          lastSampleAgeMs,
+          snapshotCount: this.snapshotCount,
+          retryDelayMs: this.retryAfter - now,
+          failureCount: this.failureCount
+        });
+        this.stop("stale-timeout");
         return true;
       }
       return false;
     }
     if (this.startedAt > 0 && now - this.startedAt > HELPER_STARTUP_MS) {
+      const startupElapsedMs = now - this.startedAt;
       this.latest = null;
       this.isPrimed = false;
       this.lastSampleAt = 0;
       this.startedAt = 0;
-      this.retryAfter = now + HELPER_RETRY_DELAY_MS;
-      this.stop();
+      this.scheduleRetry("startup-timeout", now);
+      writePerfLog("helperStartupTimeout", {
+        startupElapsedMs,
+        snapshotCount: this.snapshotCount,
+        retryDelayMs: this.retryAfter - now,
+        failureCount: this.failureCount
+      });
+      this.stop("startup-timeout");
       return true;
     }
     return false;
+  }
+
+  private nextRetryDelayMs(): number {
+    const exp = Math.max(0, this.failureCount - 1);
+    const delay = HELPER_RETRY_DELAY_MS * (2 ** exp);
+    return Math.min(SimpleStatsHelper.MAX_RETRY_DELAY_MS, delay);
+  }
+
+  private resetFailureBackoff(): void {
+    this.failureCount = 0;
+    this.retryAfter = 0;
+  }
+
+  private scheduleRetry(reason: StopReason, now = Date.now()): void {
+    this.lastStopReason = reason;
+    this.failureCount += 1;
+    this.retryAfter = now + this.nextRetryDelayMs();
   }
 
   private findHelperPath(): string | null {
@@ -540,6 +627,7 @@ class SimpleStatsHelper {
         this.lastSampleAt = Date.now();
         this.snapshotCount++;
         if (!this.isPrimed) {
+          this.resetFailureBackoff();
           this.isPrimed = true;
           writePerfLog("helperPrimed", { elapsedMs: Date.now() - this.startedAt });
         }
@@ -556,7 +644,14 @@ class SimpleStatsHelper {
         }
       }
     } catch {
-      // Ignore malformed lines.
+      if (this.parseErrorCount < SimpleStatsHelper.MAX_PARSE_ERROR_LOGS) {
+        this.parseErrorCount += 1;
+        writePerfLog("helperParseError", {
+          count: this.parseErrorCount,
+          lineLength: line.length,
+          linePreview: line.slice(0, 120)
+        });
+      }
     }
   }
 }
@@ -572,9 +667,15 @@ function parseHelperSnapshot(payload: unknown): HelperSnapshot | null {
   const gpusRaw = (payload as { gpus?: unknown }).gpus;
   const topProcessRaw = (payload as { topProcess?: unknown }).topProcess;
   const t = typeof tRaw === "number" && Number.isFinite(tRaw) ? tRaw : Date.now();
-  if (!Array.isArray(itemsRaw)) return null;
+  const itemList = Array.isArray(itemsRaw) ? itemsRaw : [];
+  if (!Array.isArray(itemsRaw) && !helperInvalidItemsTypeLogged) {
+    helperInvalidItemsTypeLogged = true;
+    writePerfLog("helperInvalidItemsType", {
+      valueType: itemsRaw === null ? "null" : typeof itemsRaw
+    });
+  }
   const items: HelperItem[] = [];
-  for (const item of itemsRaw) {
+  for (const item of itemList) {
     if (!item || typeof item !== "object") continue;
     const iface = typeof (item as { iface?: unknown }).iface === "string" ? (item as { iface: string }).iface : "";
     const rxBytes = Number((item as { rxBytes?: unknown }).rxBytes);
@@ -1033,6 +1134,7 @@ class StatsPoller {
     const snapshot = this.getHelperSnapshot();
     if (!snapshot) {
       this.fsSizeCache = null;
+      this.fsSizeAt = 0;
       return null;
     }
 
@@ -1041,6 +1143,15 @@ class StatsPoller {
     }
 
     const next = this.buildFsSizeFromHelper(snapshot);
+    if (next.length === 0) {
+      if (this.fsSizeCache && this.fsSizeCache.length > 0) {
+        return this.fsSizeCache;
+      }
+      // Treat empty helper disk payloads as warmup so we retry quickly.
+      this.fsSizeCache = null;
+      this.fsSizeAt = 0;
+      return null;
+    }
     this.fsSizeCache = next;
     this.fsSizeAt = now;
     return next;
@@ -1869,4 +1980,3 @@ class StatsPoller {
 }
 
 export const statsPoller = new StatsPoller();
-

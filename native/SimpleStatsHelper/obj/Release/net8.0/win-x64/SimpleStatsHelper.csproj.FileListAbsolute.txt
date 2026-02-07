@@ -206,11 +206,6 @@ C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\SimpleStatsHelper.runtimeconfig.json
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\SimpleStatsHelper.dll
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\SimpleStatsHelper.pdb
-C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\System.Configuration.ConfigurationManager.dll
-C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\System.Diagnostics.EventLog.Messages.dll
-C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\System.Diagnostics.EventLog.dll
-C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\System.Diagnostics.PerformanceCounter.dll
-C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\System.Security.Cryptography.ProtectedData.dll
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\obj\Release\net8.0\win-x64\SimpleStatsHelper.csproj.AssemblyReference.cache
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\obj\Release\net8.0\win-x64\SimpleStatsHelper.GeneratedMSBuildEditorConfig.editorconfig
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\obj\Release\net8.0\win-x64\SimpleStatsHelper.AssemblyInfoInputs.cache
