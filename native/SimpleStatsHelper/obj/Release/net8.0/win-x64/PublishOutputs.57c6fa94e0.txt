@@ -1,2 +1,0 @@
-C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\publish\SimpleStatsHelper.pdb
-C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\publish\SimpleStatsHelper.exe

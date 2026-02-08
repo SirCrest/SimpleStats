@@ -9,8 +9,8 @@ Shared context file for all AI agents working on this repo. Read this before sta
 ## Active Work
 
 ### Claude Code (claude-code)
-**Branch:** `HelperHarden`
-**Current focus:** Top-process display improvements in helper + plugin UI
+**Branch:** `main`
+**Current focus:** None (work merged to `main`).
 
 **Recently completed:**
 - Replaced PerformanceCounter with Win32 APIs (GetSystemTimes, NtQuerySystemInformation, IOCTL_DISK_PERFORMANCE) for instant CPU/disk perf startup (~4s vs ~93s)
@@ -21,18 +21,14 @@ Shared context file for all AI agents working on this repo. Read this before sta
 - Redesigned top-process key layout: icon inline with value, process name centered below
 
 **Files actively being modified:**
-- `native/SimpleStatsHelper/Program.cs` - CpuSampler, DiskPerfSampler (Win32 APIs), TopProcessSampler (momentum + friendly names), NvidiaGpuSampler (momentum + friendly names), FriendlyNameHelper, IconHelper
-- `src/actions/metric.ts` - top-process SVG layout (renderProcessName, icon positioning)
+- none
 
 ### Codex
-**Branch:** `HelperHarden`
-**Current focus:** Release artifact automation for tagged GitHub releases (completed).
+**Branch:** `main`
+**Current focus:** Repo hygiene cleanup (completed): untracked generated helper/pack artifacts and alignment to `main`.
 
 **Files actively being modified:**
-- `.github/workflows/release-package.yml` - build/package/upload release asset
-- `scripts/package-release.ps1` - deterministic plugin packaging script
-- `package.json` - packaging script entry points
-- `CLAUDE.md` - release process note requiring packaged asset
+- none
 
 ---
 

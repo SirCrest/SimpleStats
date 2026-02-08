@@ -1,2 +1,0 @@
-C:\users\crest\source\repos\SimpleStats\com.crest.simplestats.sdPlugin\bin\SimpleStatsHelper.pdb
-C:\users\crest\source\repos\SimpleStats\com.crest.simplestats.sdPlugin\bin\SimpleStatsHelper.exe
