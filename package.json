@@ -6,7 +6,9 @@
   "license": "MIT",
   "scripts": {
     "build": "rollup -c",
-    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.crest.simplestats\""
+    "watch": "rollup -c -w --watch.onEnd=\"streamdeck restart com.crest.simplestats\"",
+    "package:release": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-release.ps1",
+    "package:release:skip-build": "powershell -NoProfile -ExecutionPolicy Bypass -File ./scripts/package-release.ps1 -SkipBuild"
   },
   "dependencies": {
     "@elgato/streamdeck": "^2.0.0"

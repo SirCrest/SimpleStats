@@ -1,0 +1,42 @@
+name: Release Package
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  package-and-upload:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and package
+        shell: pwsh
+        run: |
+          ./scripts/package-release.ps1 -Version "${{ github.event.release.tag_name }}"
+
+      - name: Upload packaged plugin to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: dist/*.streamDeckPlugin
+          fail_on_unmatched_files: true
+          overwrite_files: true
