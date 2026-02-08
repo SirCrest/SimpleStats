@@ -2,3 +2,8 @@ node_modules/
 *.sdPlugin/bin/
 *.sdPlugin/logs/
 .DS_Store
+com.crest.simplestats.sdPlugin/debug.log
+.gitignore
+com.crest.simplestats.sdPlugin/debug.log
+com.crest.simplestats.sdPlugin/net-history.json
+.pack-output/com.crest.simplestats.streamDeckPlugin
