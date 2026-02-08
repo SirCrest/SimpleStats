@@ -4,12 +4,24 @@
 // Device list cache - loaded from settings (which persist across PI opens)
 // â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const piStartTime = performance.now();
+const PI_TIMING_LOGS_ENABLED = (() => {
+  try {
+    const query = new URLSearchParams(window.location.search);
+    if (query.get("piDebugTiming") === "1") return true;
+    return window.localStorage?.getItem("simplestats_pi_debug_timing") === "1";
+  } catch {
+    return false;
+  }
+})();
 let deviceCache = { gpus: null, disks: null, netIfaces: null };
 let settingsLoadedResolve;
 const settingsLoaded = new Promise((resolve) => { settingsLoadedResolve = resolve; });
-console.log("[PI +0.0ms] PI loaded, cache: gpus=null, disks=null, net=null");
+if (PI_TIMING_LOGS_ENABLED) {
+  console.log("[PI +0.0ms] PI loaded, cache: gpus=null, disks=null, net=null");
+}
 
 function logTiming(msg) {
+  if (!PI_TIMING_LOGS_ENABLED) return;
   const elapsed = (performance.now() - piStartTime).toFixed(1);
   const logMsg = `[PI +${elapsed}ms] ${msg}`;
   console.log(logMsg);

@@ -1,6 +1,6 @@
 {
   "name": "simplestats",
-  "version": "1.0.0",
+  "version": "0.9.1",
   "private": true,
   "description": "Stream Deck plugin for task-manager style stats.",
   "license": "MIT",

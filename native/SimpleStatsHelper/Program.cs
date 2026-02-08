@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Drawing;
 using System.Net.NetworkInformation;
@@ -67,6 +68,54 @@ public sealed record NetPayload(
   List<GpuItem>? gpus,
   TopProcessPayload? topProcess
 );
+
+internal sealed class BoundedConcurrentCache<TKey, TValue> where TKey : notnull
+{
+  private sealed record CacheEntry(TValue Value, long Version);
+
+  private readonly int _maxEntries;
+  private readonly ConcurrentDictionary<TKey, CacheEntry> _items;
+  private readonly ConcurrentQueue<(TKey Key, long Version)> _order = new();
+  private long _nextVersion;
+
+  public BoundedConcurrentCache(int maxEntries, IEqualityComparer<TKey>? comparer = null)
+  {
+    _maxEntries = Math.Max(1, maxEntries);
+    _items = comparer is null
+      ? new ConcurrentDictionary<TKey, CacheEntry>()
+      : new ConcurrentDictionary<TKey, CacheEntry>(comparer);
+  }
+
+  public bool TryGetValue(TKey key, out TValue value)
+  {
+    if (_items.TryGetValue(key, out var entry))
+    {
+      value = entry.Value;
+      return true;
+    }
+    value = default!;
+    return false;
+  }
+
+  public void Set(TKey key, TValue value)
+  {
+    var version = Interlocked.Increment(ref _nextVersion);
+    _items[key] = new CacheEntry(value, version);
+    _order.Enqueue((key, version));
+    TrimIfNeeded();
+  }
+
+  private void TrimIfNeeded()
+  {
+    while (_items.Count > _maxEntries && _order.TryDequeue(out var queued))
+    {
+      if (_items.TryGetValue(queued.Key, out var current) && current.Version == queued.Version)
+      {
+        _items.TryRemove(queued.Key, out _);
+      }
+    }
+  }
+}
 
 internal sealed class CpuSampler
 {
@@ -520,7 +569,8 @@ internal sealed class NvidiaGpuSampler
       using var proc = Process.GetProcessById((int)pid);
       var name = proc.ProcessName;
       if (string.IsNullOrEmpty(name)) return null;
-      return name.Length <= 12 ? name : name[..12];
+      var friendly = FriendlyNameHelper.GetFriendlyName((int)pid, name);
+      return friendly.Length <= 30 ? friendly : friendly[..30];
     }
     catch
     {
@@ -736,6 +786,81 @@ internal sealed class NvidiaGpuSampler
   }
 }
 
+internal static class FriendlyNameHelper
+{
+  private const int MaxCacheEntries = 512;
+  private static readonly BoundedConcurrentCache<string, string> s_cache = new(MaxCacheEntries, StringComparer.OrdinalIgnoreCase);
+  private static readonly (string Name, string Friendly)[] s_seedFriendlyNames =
+  {
+    ("Taskmgr", "Task Manager"),
+    ("regedit", "Registry Editor"),
+    ("mmc", "Management Console"),
+    ("devenv", "Visual Studio"),
+    ("perfmon", "Performance Monitor"),
+    ("resmon", "Resource Monitor"),
+    ("dxdiag", "DirectX Diagnostic"),
+    ("eventvwr", "Event Viewer"),
+    ("compmgmt", "Computer Management"),
+    ("diskmgmt", "Disk Management"),
+    ("services", "Services"),
+    ("msconfig", "System Configuration"),
+    ("cmd", "Command Prompt"),
+    ("powershell", "PowerShell"),
+    ("pwsh", "PowerShell"),
+    ("WindowsTerminal", "Windows Terminal"),
+    ("explorer", "Explorer"),
+    ("SearchHost", "Windows Search"),
+    ("SecurityHealthSystray", "Windows Security"),
+    ("svchost", "Service Host"),
+    ("csrss", "Client Server Runtime"),
+    ("dwm", "Desktop Window Mgr"),
+  };
+
+  // Well-known exe paths for icon extraction from elevated processes
+  private static readonly Dictionary<string, string> s_exePaths = new(StringComparer.OrdinalIgnoreCase)
+  {
+    ["Taskmgr"] = @"C:\Windows\System32\Taskmgr.exe",
+    ["regedit"] = @"C:\Windows\regedit.exe",
+    ["mmc"] = @"C:\Windows\System32\mmc.exe",
+    ["perfmon"] = @"C:\Windows\System32\perfmon.exe",
+    ["resmon"] = @"C:\Windows\System32\resmon.exe",
+    ["cmd"] = @"C:\Windows\System32\cmd.exe",
+    ["powershell"] = @"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
+    ["explorer"] = @"C:\Windows\explorer.exe",
+  };
+
+  static FriendlyNameHelper()
+  {
+    foreach (var (name, friendly) in s_seedFriendlyNames)
+      s_cache.Set(name, friendly);
+  }
+
+  public static string GetFriendlyName(int pid, string processName)
+  {
+    if (s_cache.TryGetValue(processName, out var cached)) return cached;
+    try
+    {
+      using var proc = Process.GetProcessById(pid);
+      var desc = proc.MainModule?.FileVersionInfo?.FileDescription;
+      if (!string.IsNullOrWhiteSpace(desc))
+      {
+        var friendly = desc.Trim();
+        s_cache.Set(processName, friendly);
+        return friendly;
+      }
+    }
+    catch { }
+    s_cache.Set(processName, processName);
+    return processName;
+  }
+
+  public static string? GetKnownExePath(string processName)
+  {
+    s_exePaths.TryGetValue(processName, out var path);
+    return path;
+  }
+}
+
 internal static class MomentumHelper
 {
   /// <summary>
@@ -787,6 +912,14 @@ internal sealed class TopProcessSampler
   private readonly Dictionary<string, double> _cpuScores = new(StringComparer.OrdinalIgnoreCase);
   private readonly Dictionary<string, double> _memScores = new(StringComparer.OrdinalIgnoreCase);
   private readonly double _totalMemMB;
+  private int _lastCpuId = -1;
+  private string? _lastCpuProcessName;
+  private string? _lastCpuFriendlyName;
+  private string? _lastCpuIconBase64;
+  private int _lastMemId = -1;
+  private string? _lastMemProcessName;
+  private string? _lastMemFriendlyName;
+  private string? _lastMemIconBase64;
 
   public TopProcessSampler()
   {
@@ -923,13 +1056,77 @@ internal sealed class TopProcessSampler
 
     if (topCpuName == null && topMemName2 == null) return null;
 
-    string? cpuIcon = topCpuId > 0 ? IconHelper.GetIconBase64(topCpuId) : null;
-    string? memIcon = topMemId2 > 0 ? IconHelper.GetIconBase64(topMemId2) : null;
+    bool cpuWinnerChanged =
+      topCpuId != _lastCpuId ||
+      !string.Equals(topCpuName, _lastCpuProcessName, StringComparison.OrdinalIgnoreCase);
+    if (topCpuName == null)
+    {
+      _lastCpuId = -1;
+      _lastCpuProcessName = null;
+      _lastCpuFriendlyName = null;
+      _lastCpuIconBase64 = null;
+    }
+    else if (topCpuId > 0)
+    {
+      if (cpuWinnerChanged || _lastCpuFriendlyName == null)
+      {
+        _lastCpuFriendlyName = Truncate(FriendlyNameHelper.GetFriendlyName(topCpuId, topCpuName), 30);
+      }
+      if (cpuWinnerChanged || _lastCpuIconBase64 == null)
+      {
+        _lastCpuIconBase64 = IconHelper.GetIconBase64(topCpuId);
+      }
+      _lastCpuId = topCpuId;
+      _lastCpuProcessName = topCpuName;
+    }
+    else
+    {
+      _lastCpuId = topCpuId;
+      _lastCpuProcessName = topCpuName;
+      _lastCpuFriendlyName = Truncate(topCpuName, 30);
+      _lastCpuIconBase64 = null;
+    }
+
+    bool memWinnerChanged =
+      topMemId2 != _lastMemId ||
+      !string.Equals(topMemName2, _lastMemProcessName, StringComparison.OrdinalIgnoreCase);
+    if (topMemName2 == null)
+    {
+      _lastMemId = -1;
+      _lastMemProcessName = null;
+      _lastMemFriendlyName = null;
+      _lastMemIconBase64 = null;
+    }
+    else if (topMemId2 > 0)
+    {
+      if (memWinnerChanged || _lastMemFriendlyName == null)
+      {
+        _lastMemFriendlyName = Truncate(FriendlyNameHelper.GetFriendlyName(topMemId2, topMemName2), 30);
+      }
+      if (memWinnerChanged || _lastMemIconBase64 == null)
+      {
+        _lastMemIconBase64 = IconHelper.GetIconBase64(topMemId2);
+      }
+      _lastMemId = topMemId2;
+      _lastMemProcessName = topMemName2;
+    }
+    else
+    {
+      _lastMemId = topMemId2;
+      _lastMemProcessName = topMemName2;
+      _lastMemFriendlyName = Truncate(topMemName2, 30);
+      _lastMemIconBase64 = null;
+    }
+
+    string? cpuFriendly = topCpuName == null ? null : _lastCpuFriendlyName ?? Truncate(topCpuName, 30);
+    string? memFriendly = topMemName2 == null ? null : _lastMemFriendlyName ?? Truncate(topMemName2, 30);
+    string? cpuIcon = topCpuName == null ? null : _lastCpuIconBase64;
+    string? memIcon = topMemName2 == null ? null : _lastMemIconBase64;
 
     return new TopProcessPayload(
-      cpuName: Truncate(topCpuName, 12),
+      cpuName: cpuFriendly,
       cpuPct: topCpuPct,
-      memName: Truncate(topMemName2, 12),
+      memName: memFriendly,
       memMB: topMemMB2 >= 0 ? Math.Round(topMemMB2, 0) : null,
       cpuIconBase64: cpuIcon,
       memIconBase64: memIcon
@@ -945,7 +1142,8 @@ internal sealed class TopProcessSampler
 
 internal static class IconHelper
 {
-  private static readonly Dictionary<string, string?> s_cache = new(StringComparer.OrdinalIgnoreCase);
+  private const int MaxCacheEntries = 512;
+  private static readonly BoundedConcurrentCache<string, string?> s_cache = new(MaxCacheEntries, StringComparer.OrdinalIgnoreCase);
 
   public static string? GetIconBase64(int pid)
   {
@@ -957,9 +1155,11 @@ internal static class IconHelper
       if (s_cache.TryGetValue(name, out var cached)) return cached;
       string? path = null;
       try { path = proc.MainModule?.FileName; } catch { }
-      if (string.IsNullOrEmpty(path)) { s_cache[name] = null; return null; }
+      if (string.IsNullOrEmpty(path))
+        path = FriendlyNameHelper.GetKnownExePath(name);
+      if (string.IsNullOrEmpty(path)) { s_cache.Set(name, null); return null; }
       using var icon = Icon.ExtractAssociatedIcon(path);
-      if (icon == null) { s_cache[name] = null; return null; }
+      if (icon == null) { s_cache.Set(name, null); return null; }
       using var bmp = new Bitmap(24, 24);
       using (var g = Graphics.FromImage(bmp))
       {
@@ -969,7 +1169,7 @@ internal static class IconHelper
       using var ms = new MemoryStream();
       bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
       var b64 = Convert.ToBase64String(ms.ToArray());
-      s_cache[name] = b64;
+      s_cache.Set(name, b64);
       return b64;
     }
     catch { return null; }

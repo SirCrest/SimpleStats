@@ -24,6 +24,9 @@ const log = streamDeck.logger.createScope("MetricAction");
 const ALWAYS_DEBUG = false;
 const DEBUG_LOG_ROTATE_BYTES = 100 * 1024 * 1024;
 const DEBUG_LOG_ROTATE_CHECK_MS = 10 * 1000;
+const DEBUG_LOG_FLUSH_INTERVAL_MS = 250;
+const DEBUG_LOG_QUEUE_MAX_LINES = 4000;
+const ENABLE_PI_TIMING_LOGS = process.env.SIMPLESTATS_PI_DEBUG_TIMING === "1";
 let debugLogRotateAt = 0;
 const debugLogPaths = (() => {
   const paths: string[] = [];
@@ -41,6 +44,10 @@ const debugLogPaths = (() => {
   return paths;
 })();
 let activeDebugLogPath: string | null = null;
+let debugLogQueue: string[] = [];
+let debugLogDroppedLines = 0;
+let debugLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let debugLogFlushInProgress = false;
 
 function rotateDebugLogIfNeeded(candidate: string): void {
   const now = Date.now();
@@ -56,24 +63,71 @@ function rotateDebugLogIfNeeded(candidate: string): void {
   }
 }
 
+function scheduleDebugLogFlush(): void {
+  if (debugLogFlushTimer) return;
+  debugLogFlushTimer = setTimeout(() => {
+    debugLogFlushTimer = null;
+    void flushDebugLogQueue();
+  }, DEBUG_LOG_FLUSH_INTERVAL_MS);
+  if (typeof debugLogFlushTimer.unref === "function") {
+    debugLogFlushTimer.unref();
+  }
+}
+
+async function flushDebugLogQueue(): Promise<void> {
+  if (debugLogFlushInProgress) return;
+  debugLogFlushInProgress = true;
+  try {
+    if (debugLogDroppedLines > 0) {
+      const droppedLine = `${new Date().toISOString()} debugLogDropped {"count":${debugLogDroppedLines}}\n`;
+      debugLogQueue.unshift(droppedLine);
+      debugLogDroppedLines = 0;
+    }
+    while (debugLogQueue.length > 0) {
+      const lines = debugLogQueue;
+      debugLogQueue = [];
+      const payload = lines.join("");
+      const candidates = activeDebugLogPath ? [activeDebugLogPath] : debugLogPaths;
+      let wrote = false;
+      for (const candidate of candidates) {
+        try {
+          const dir = path.dirname(candidate);
+          await fs.promises.mkdir(dir, { recursive: true });
+          rotateDebugLogIfNeeded(candidate);
+          await fs.promises.appendFile(candidate, payload, "utf8");
+          activeDebugLogPath = candidate;
+          wrote = true;
+          break;
+        } catch {
+          // Try the next path.
+        }
+      }
+      if (!wrote) {
+        debugLogQueue = lines.concat(debugLogQueue);
+        break;
+      }
+    }
+  } catch {
+    // Swallow logging errors to avoid impacting the plugin.
+  } finally {
+    debugLogFlushInProgress = false;
+    if (debugLogQueue.length > 0) {
+      scheduleDebugLogFlush();
+    }
+  }
+}
+
 function writeDebugLog(message: string, data?: unknown): void {
   try {
     const stamp = new Date().toISOString();
     const payload = data ? ` ${JSON.stringify(data)}` : "";
-    const line = `${stamp} ${message}${payload}\n`;
-    const candidates = activeDebugLogPath ? [activeDebugLogPath] : debugLogPaths;
-    for (const candidate of candidates) {
-      try {
-        const dir = path.dirname(candidate);
-        fs.mkdirSync(dir, { recursive: true });
-        rotateDebugLogIfNeeded(candidate);
-        fs.appendFileSync(candidate, line);
-        activeDebugLogPath = candidate;
-        return;
-      } catch {
-        // Try the next path.
-      }
+    debugLogQueue.push(`${stamp} ${message}${payload}\n`);
+    if (debugLogQueue.length > DEBUG_LOG_QUEUE_MAX_LINES) {
+      const dropCount = debugLogQueue.length - DEBUG_LOG_QUEUE_MAX_LINES;
+      debugLogQueue.splice(0, dropCount);
+      debugLogDroppedLines += dropCount;
     }
+    scheduleDebugLogFlush();
   } catch {
     // Swallow logging errors to avoid impacting the plugin.
   }
@@ -555,6 +609,24 @@ function textLengthAttrs(text: string): string {
   return ` textLength="${TEXT_WIDTH}" lengthAdjust="spacingAndGlyphs"`;
 }
 
+function renderProcessName(name: string, color: string): string {
+  const escaped = escapeSvg(name);
+  if (name.length <= 18) {
+    return `<text x="36" y="48" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
+      font-size="9" font-weight="600" fill="${color}"${textLengthAttrs(name)}>${escaped}</text>`;
+  }
+  const mid = Math.ceil(name.length / 2);
+  let breakIdx = name.lastIndexOf(" ", mid);
+  if (breakIdx <= 0) breakIdx = name.indexOf(" ", mid);
+  if (breakIdx <= 0) breakIdx = mid;
+  const line1 = name.slice(0, breakIdx).trim();
+  const line2 = name.slice(breakIdx).trim();
+  return `<text x="36" y="44" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
+      font-size="8" font-weight="600" fill="${color}"${textLengthAttrs(line1)}>${escapeSvg(line1)}</text>
+    <text x="36" y="54" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
+      font-size="8" font-weight="600" fill="${color}"${textLengthAttrs(line2)}>${escapeSvg(line2)}</text>`;
+}
+
 const PERCENT_METRICS: Set<MetricId> = new Set([
   "cpu-total", "cpu-core", "cpu-peak", "gpu-load", "gpu-vram",
   "mem-total", "disk-activity", "disk-used", "disk-free", "top-mem-pct"
@@ -596,12 +668,13 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
     `.trim();
   }
 
-  // Top-process layout: icon + separate value/name, no graph
+  // Top-process layout: icon inline with value, process name centered below
   if (display.processName != null) {
-    const procName = escapeSvg(display.processName || "");
+    const procName = display.processName || "";
     const iconMarkup = display.processIcon
-      ? `<image x="24" y="32" width="24" height="24" href="data:image/png;base64,${display.processIcon}" />`
+      ? `<image x="52" y="13" width="16" height="16" href="data:image/png;base64,${display.processIcon}" />`
       : "";
+    const nameMarkup = renderProcessName(procName, labelColor);
     return `
     <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
       <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
@@ -610,8 +683,7 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
       <text x="${TEXT_LEFT}" y="${VALUE_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
         font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${value}</text>
       ${iconMarkup}
-      <text x="36" y="64" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
-        font-size="8" font-weight="600" fill="${labelColor}"${textLengthAttrs(procName)}>${procName}</text>
+      ${nameMarkup}
     </svg>
     `.trim();
   }
@@ -1400,7 +1472,9 @@ export class MetricAction extends SingletonAction<Settings> {
 
     // PI logging - forward to debug.log
     if (payload.event === "piLog" && typeof payload.message === "string") {
-      writeDebugLog("PI", payload.message);
+      if (ENABLE_PI_TIMING_LOGS) {
+        writeDebugLog("PI", payload.message);
+      }
       return;
     }
 

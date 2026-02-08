@@ -121,11 +121,14 @@ const PERF_LOG_INTERVAL_MS = 30 * 1000;
 const PERF_SLOW_TICK_MS = 200;
 const PERF_LOG_ROTATE_BYTES = 100 * 1024 * 1024;
 const PERF_LOG_ROTATE_CHECK_MS = 10 * 1000;
+const PERF_LOG_FLUSH_INTERVAL_MS = 250;
+const PERF_LOG_QUEUE_MAX_LINES = 4000;
 let perfLogRotateAt = 0;
 const HELPER_INTERVAL_MS = 1000;
 const HELPER_STALE_MS = 5000;
 const HELPER_STARTUP_MS = 15000;
 const HELPER_RETRY_DELAY_MS = 5000;
+const HELPER_STOP_TIMEOUT_MS = 5000;
 const HELPER_EXE_NAME = "SimpleStatsHelper.exe";
 const HELPER_CMD_RESCAN_DISKS = "rescan_disks";
 const HELPER_PATHS = (() => {
@@ -141,6 +144,10 @@ const perfLogPaths = (() => {
   return [path.join(pluginDir, "debug.log")];
 })();
 let activePerfLogPath: string | null = null;
+let perfLogQueue: string[] = [];
+let perfLogDroppedLines = 0;
+let perfLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
+let perfLogFlushInProgress = false;
 
 function rotatePerfLogIfNeeded(candidate: string): void {
   const now = Date.now();
@@ -156,24 +163,71 @@ function rotatePerfLogIfNeeded(candidate: string): void {
   }
 }
 
+function schedulePerfLogFlush(): void {
+  if (perfLogFlushTimer) return;
+  perfLogFlushTimer = setTimeout(() => {
+    perfLogFlushTimer = null;
+    void flushPerfLogQueue();
+  }, PERF_LOG_FLUSH_INTERVAL_MS);
+  if (typeof perfLogFlushTimer.unref === "function") {
+    perfLogFlushTimer.unref();
+  }
+}
+
+async function flushPerfLogQueue(): Promise<void> {
+  if (perfLogFlushInProgress) return;
+  perfLogFlushInProgress = true;
+  try {
+    if (perfLogDroppedLines > 0) {
+      const droppedLine = `${new Date().toISOString()} perfLogDropped {"count":${perfLogDroppedLines}}\n`;
+      perfLogQueue.unshift(droppedLine);
+      perfLogDroppedLines = 0;
+    }
+    while (perfLogQueue.length > 0) {
+      const lines = perfLogQueue;
+      perfLogQueue = [];
+      const payload = lines.join("");
+      const candidates = activePerfLogPath ? [activePerfLogPath] : perfLogPaths;
+      let wrote = false;
+      for (const candidate of candidates) {
+        try {
+          const dir = path.dirname(candidate);
+          await fs.promises.mkdir(dir, { recursive: true });
+          rotatePerfLogIfNeeded(candidate);
+          await fs.promises.appendFile(candidate, payload, "utf8");
+          activePerfLogPath = candidate;
+          wrote = true;
+          break;
+        } catch {
+          // Try the next path.
+        }
+      }
+      if (!wrote) {
+        perfLogQueue = lines.concat(perfLogQueue);
+        break;
+      }
+    }
+  } catch {
+    // Swallow logging errors to avoid impacting the plugin.
+  } finally {
+    perfLogFlushInProgress = false;
+    if (perfLogQueue.length > 0) {
+      schedulePerfLogFlush();
+    }
+  }
+}
+
 function writePerfLog(message: string, data?: unknown): void {
   try {
     const stamp = new Date().toISOString();
     const payload = data ? ` ${JSON.stringify(data)}` : "";
-    const line = `${stamp} ${message}${payload}\n`;
-    const candidates = activePerfLogPath ? [activePerfLogPath] : perfLogPaths;
-    for (const candidate of candidates) {
-      try {
-        const dir = path.dirname(candidate);
-        fs.mkdirSync(dir, { recursive: true });
-        rotatePerfLogIfNeeded(candidate);
-        fs.appendFileSync(candidate, line);
-        activePerfLogPath = candidate;
-        return;
-      } catch {
-        // Try the next path.
-      }
+    perfLogQueue.push(`${stamp} ${message}${payload}\n`);
+    if (perfLogQueue.length > PERF_LOG_QUEUE_MAX_LINES) {
+      const dropCount = perfLogQueue.length - PERF_LOG_QUEUE_MAX_LINES;
+      perfLogQueue.splice(0, dropCount);
+      perfLogDroppedLines += dropCount;
     }
+    schedulePerfLogFlush();
   } catch {
     // Swallow logging errors to avoid impacting the plugin.
   }
@@ -389,6 +443,7 @@ function parseNumberFromUnknown(value: unknown): number | null {
 }
 
 type StopReason = "manual" | "startup-timeout" | "stale-timeout" | "child-error" | "spawn-failed" | "unexpected-exit";
+type HelperLifecycleState = "idle" | "starting" | "running" | "stopping" | "backoff" | "disabled";
 let helperInvalidItemsTypeLogged = false;
 
 class SimpleStatsHelper {
@@ -409,36 +464,43 @@ class SimpleStatsHelper {
   private expectedExitPid: number | null = null;
   private lastStopReason: StopReason = "manual";
   private parseErrorCount = 0;
+  private lifecycleState: HelperLifecycleState = "idle";
+  private stopTimer: ReturnType<typeof setTimeout> | null = null;
 
   ensureRunning(): boolean {
-    if (this.disabled) return false;
+    if (this.disabled) {
+      this.setLifecycleState("disabled", "disabled");
+      return false;
+    }
+    if (this.lifecycleState === "stopping") return false;
     if (this.child) return true;
-    if (this.retryAfter > 0 && Date.now() < this.retryAfter) {
+    const now = Date.now();
+    if (this.retryAfter > 0 && now < this.retryAfter) {
+      this.setLifecycleState("backoff", "retry-window");
       return false;
     }
     this.retryAfter = 0;
+    if (this.lifecycleState === "backoff") {
+      this.setLifecycleState("idle", "retry-window-ended");
+    }
 
     if (!this.helperPath) {
       this.helperPath = this.findHelperPath();
     }
     if (!this.helperPath) {
       this.disabled = true;
+      this.setLifecycleState("disabled", "helper-missing");
       writePerfLog("helperMissing", { paths: HELPER_PATHS });
       return false;
     }
 
+    let child: ReturnType<typeof spawn>;
     try {
-      const child = spawn(
+      child = spawn(
         this.helperPath,
         ["--interval", String(HELPER_INTERVAL_MS)],
         { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
       );
-      this.child = child;
-      this.startedAt = Date.now();
-      this.snapshotCount = 0;
-      this.lastStopReason = "manual";
-      this.expectedExitPid = null;
-      writePerfLog("helperStarted", { path: this.helperPath, pid: child.pid });
     } catch (err) {
       this.child = null;
       this.scheduleRetry("spawn-failed");
@@ -451,25 +513,20 @@ class SimpleStatsHelper {
       return false;
     }
 
-    const child = this.child;
-    if (!child?.stdout) {
-      this.child = null;
-      this.scheduleRetry("spawn-failed");
-      writePerfLog("helperProcessError", {
-        reason: "spawn-failed",
-        error: "stdout unavailable",
-        retryDelayMs: this.retryAfter > 0 ? this.retryAfter - Date.now() : 0,
-        failureCount: this.failureCount
-      });
-      return false;
-    }
+    this.child = child;
+    this.startedAt = now;
+    this.snapshotCount = 0;
+    this.parseErrorCount = 0;
+    this.buffer = "";
+    this.lastSampleAt = 0;
+    this.lastStopReason = "manual";
+    this.expectedExitPid = null;
+    this.setLifecycleState("starting", "spawn");
+    writePerfLog("helperStarted", { path: this.helperPath, pid: child.pid });
 
-    child.stdout.on("data", (chunk) => this.handleChunk(chunk));
-    child.stderr?.on("data", (chunk) => {
-      writePerfLog("helperStderr", { message: chunk.toString().trim() });
-    });
     child.on("error", (err) => {
       if (this.child !== child) return;
+      if (this.lifecycleState === "stopping") return;
       this.scheduleRetry("child-error");
       writePerfLog("helperProcessError", {
         reason: "child-error",
@@ -482,16 +539,25 @@ class SimpleStatsHelper {
     });
     child.on("exit", (code, signal) => {
       const pid = child.pid ?? null;
-      const expected = pid !== null && this.expectedExitPid === pid;
+      const expectedByPid = pid !== null && this.expectedExitPid === pid;
+      const expected = expectedByPid || this.lifecycleState === "stopping";
       const reason = expected ? this.lastStopReason : "unexpected-exit";
-      if (expected) {
+      if (expectedByPid) {
         this.expectedExitPid = null;
       }
+      this.clearStopTimer();
       if (this.child === child) {
         this.child = null;
       }
+      const exitAt = Date.now();
       if (!expected) {
-        this.scheduleRetry("unexpected-exit");
+        this.scheduleRetry("unexpected-exit", exitAt);
+      } else if (this.disabled) {
+        this.setLifecycleState("disabled", `exit:${reason}`);
+      } else if (this.retryAfter > 0 && exitAt < this.retryAfter) {
+        this.setLifecycleState("backoff", `exit:${reason}`);
+      } else {
+        this.setLifecycleState("idle", `exit:${reason}`);
       }
       writePerfLog("helperExit", {
         pid,
@@ -499,10 +565,28 @@ class SimpleStatsHelper {
         signal,
         expected,
         reason,
-        retryDelayMs: !expected && this.retryAfter > 0 ? this.retryAfter - Date.now() : 0,
+        retryDelayMs: !expected && this.retryAfter > 0 ? this.retryAfter - exitAt : 0,
         failureCount: this.failureCount,
-        snapshotCount: this.snapshotCount
+        snapshotCount: this.snapshotCount,
+        lifecycleState: this.lifecycleState
       });
+    });
+
+    if (!child.stdout) {
+      this.scheduleRetry("spawn-failed");
+      writePerfLog("helperProcessError", {
+        reason: "spawn-failed",
+        error: "stdout unavailable",
+        retryDelayMs: this.retryAfter > 0 ? this.retryAfter - Date.now() : 0,
+        failureCount: this.failureCount
+      });
+      this.stop("spawn-failed");
+      return false;
+    }
+
+    child.stdout.on("data", (chunk) => this.handleChunk(chunk));
+    child.stderr?.on("data", (chunk) => {
+      writePerfLog("helperStderr", { message: chunk.toString().trim() });
     });
 
     return true;
@@ -529,17 +613,29 @@ class SimpleStatsHelper {
   }
 
   stop(reason: StopReason = "manual"): void {
-    if (this.child) {
-      const proc = this.child;
-      this.child = null;
-      this.lastStopReason = reason;
-      this.expectedExitPid = proc.pid ?? null;
-      try {
-        proc.kill();
-      } catch {
-        // already dead
-      }
-      writePerfLog("helperStopped", { pid: proc.pid, reason });
+    const proc = this.child;
+    if (!proc) return;
+
+    this.lastStopReason = reason;
+    this.expectedExitPid = proc.pid ?? null;
+    this.setLifecycleState("stopping", `stop:${reason}`);
+    this.clearStopTimer();
+    try {
+      proc.kill();
+      writePerfLog("helperStopped", { pid: proc.pid, reason, mode: "graceful" });
+    } catch (err) {
+      writePerfLog("helperStopSignalError", {
+        pid: proc.pid,
+        reason,
+        error: String(err)
+      });
+    }
+    this.stopTimer = setTimeout(() => {
+      this.stopTimer = null;
+      this.forceTerminate(proc, reason);
+    }, HELPER_STOP_TIMEOUT_MS);
+    if (typeof this.stopTimer.unref === "function") {
+      this.stopTimer.unref();
     }
   }
 
@@ -550,6 +646,7 @@ class SimpleStatsHelper {
 
   shouldFallback(now = Date.now()): boolean {
     if (this.disabled) return true;
+    if (this.lifecycleState === "stopping") return true;
     if (!this.child) return true;
     if (this.lastSampleAt > 0) {
       if (now - this.lastSampleAt > HELPER_STALE_MS) {
@@ -604,6 +701,67 @@ class SimpleStatsHelper {
     this.lastStopReason = reason;
     this.failureCount += 1;
     this.retryAfter = now + this.nextRetryDelayMs();
+    this.setLifecycleState("backoff", `retry:${reason}`);
+  }
+
+  private clearStopTimer(): void {
+    if (!this.stopTimer) return;
+    clearTimeout(this.stopTimer);
+    this.stopTimer = null;
+  }
+
+  private forceTerminate(proc: ReturnType<typeof spawn>, reason: StopReason): void {
+    if (this.child !== proc) return;
+    const pid = proc.pid ?? null;
+    writePerfLog("helperStopTimeout", {
+      pid,
+      reason,
+      timeoutMs: HELPER_STOP_TIMEOUT_MS
+    });
+    if (pid && process.platform === "win32") {
+      try {
+        const killer = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+          windowsHide: true,
+          stdio: "ignore"
+        });
+        killer.on("error", (err) => {
+          writePerfLog("helperStopForceError", {
+            pid,
+            reason,
+            mode: "taskkill",
+            error: String(err)
+          });
+        });
+        killer.unref();
+        writePerfLog("helperStopForced", { pid, reason, mode: "taskkill" });
+      } catch (err) {
+        writePerfLog("helperStopForceError", {
+          pid,
+          reason,
+          mode: "taskkill",
+          error: String(err)
+        });
+      }
+      return;
+    }
+    try {
+      proc.kill("SIGKILL");
+      writePerfLog("helperStopForced", { pid, reason, mode: "sigkill" });
+    } catch (err) {
+      writePerfLog("helperStopForceError", {
+        pid,
+        reason,
+        mode: "sigkill",
+        error: String(err)
+      });
+    }
+  }
+
+  private setLifecycleState(next: HelperLifecycleState, context: string): void {
+    if (this.lifecycleState === next) return;
+    const previous = this.lifecycleState;
+    this.lifecycleState = next;
+    writePerfLog("helperState", { from: previous, to: next, context });
   }
 
   private findHelperPath(): string | null {
@@ -650,7 +808,10 @@ class SimpleStatsHelper {
         if (!this.isPrimed) {
           this.resetFailureBackoff();
           this.isPrimed = true;
+          this.setLifecycleState("running", "primed");
           writePerfLog("helperPrimed", { elapsedMs: Date.now() - this.startedAt });
+        } else if (this.lifecycleState !== "running") {
+          this.setLifecycleState("running", "snapshot");
         }
         if (this.snapshotCount <= 5) {
           writePerfLog("helperSnapshot", {
