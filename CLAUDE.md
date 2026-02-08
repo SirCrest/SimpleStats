@@ -63,7 +63,7 @@ Disk
 Network
 - Upload rate (Mbps, per interface or total)
 - Download rate (Mbps, per interface or total)
-- Total transfer over a period (Last 60 seconds / Last 60 minutes / Last 24 hours)
+- Total transfer over a period (Last 60 seconds / Last hour / Last 24 hours)
 
 System
 - Clock (HH:MM:SS)
@@ -75,7 +75,7 @@ System
 - Polling interval selector (1-5 seconds)
 - Conditional fields for device selection (CPU core, GPU, Disk, Interface)
 - CPU per-core stepper controls
-- Transfer period selector for network totals (Last 60 seconds / Last 60 minutes / Last 24 hours)
+- Transfer period selector for network totals (Last 60 seconds / Last hour / Last 24 hours)
 - Disk space note: "Disk space updates every 60 seconds."
 - Footnote shown for total transfer: "Totals are recorded only when the Stream Deck app is active."
 - Light text styling for the dark Stream Deck UI

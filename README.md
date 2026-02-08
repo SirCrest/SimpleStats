@@ -71,7 +71,7 @@ Show `IDLE` when top-process activity is below your chosen threshold.
 ### Network
 - `Upload Rate (Mbps)`
 - `Download Rate (Mbps)`
-- `Total Transfer` over last `60 seconds`, `60 minutes`, or `24 hours`
+- `Total Transfer` over last `60 seconds`, `hour`, or `24 hours`
 
 ### System
 - `Clock (HH:MM:SS)`

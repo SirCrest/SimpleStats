@@ -416,6 +416,10 @@ class HistorySeries {
     return [...this.values];
   }
 
+  last(): number | null {
+    return this.values.length > 0 ? this.values[this.values.length - 1] : null;
+  }
+
   setValues(values: Array<number | null>): void {
     this.values = values
       .map((value) => (typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null))
@@ -1388,6 +1392,8 @@ export class MetricAction extends SingletonAction<Settings> {
     if (legacyDefaults && !hasAnyMetricSettings(ev.payload.settings)) {
       void action.setSettings({ ...legacyDefaults });
     }
+    const preGroup = normalizeSettings(ev.payload.settings).group;
+    statsPoller.setInterest(action.id, preGroup);
     const { state } = this.getState(action, ev.payload.settings);
     this.bumpDebug(state);
     log.info("willAppear", {
@@ -1405,6 +1411,8 @@ export class MetricAction extends SingletonAction<Settings> {
           this.updateAction(action, state, snapshot, true);
         })
         .catch(() => undefined);
+    } else {
+      this.updateAction(action, state, statsPoller.getSnapshot(), true);
     }
     void this.refreshSettings(action);
   }
@@ -1532,9 +1540,19 @@ export class MetricAction extends SingletonAction<Settings> {
       pruneHistoryCache();
       const cacheKeyBase = historyCacheBaseKey(actionInstance);
       const cacheKey = historyCacheKey(cacheKeyBase, nextKey);
-      const background = canRestoreHistory ? backgroundStates.get(cacheKey) : null;
+      let background = canRestoreHistory ? backgroundStates.get(cacheKey) : null;
+      let backgroundKey = cacheKey;
+      if (!background && canRestoreHistory) {
+        for (const [key, bg] of backgroundStates) {
+          if (bg.settingsKey === nextKey) {
+            background = bg;
+            backgroundKey = key;
+            break;
+          }
+        }
+      }
       if (background) {
-        stopBackgroundState(cacheKey, background);
+        stopBackgroundState(backgroundKey, background);
       }
       const cached = canRestoreHistory ? historyCache.get(cacheKey) : null;
       const reuseValues = cached && cached.settingsKey === nextKey ? cached.values : null;
@@ -1642,9 +1660,15 @@ export class MetricAction extends SingletonAction<Settings> {
         return;
       }
     }
-    state.lastRenderAt = now;
-
     const display = buildMetricDisplay(snapshot, state.settings);
+    const isNetRate = state.settings.metric === "net-up" || state.settings.metric === "net-down";
+    if (isNetRate && display.graphValue === null) return;
+    if (isNetRate && display.graphValue === 0) {
+      const prev = state.history.last();
+      if (typeof prev === "number" && prev > 0) return;
+    }
+
+    state.lastRenderAt = now;
     if (diskSpaceMetric && typeof display.graphValue === "number" && Number.isFinite(display.graphValue)) {
       state.diskSpaceWarmupComplete = true;
     }
