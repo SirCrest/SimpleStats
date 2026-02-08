@@ -899,6 +899,31 @@ internal static class MomentumHelper
 
 internal sealed class TopProcessSampler
 {
+  [DllImport("ntdll.dll")]
+  private static extern int NtQueryInformationProcess(
+    IntPtr processHandle, int processInformationClass,
+    out VM_COUNTERS_EX2 processInformation, int processInformationLength, out int returnLength);
+
+  [StructLayout(LayoutKind.Sequential)]
+  private struct VM_COUNTERS_EX2
+  {
+    public nuint PeakVirtualSize, VirtualSize, PageFaultCount, PeakWorkingSetSize, WorkingSetSize;
+    public nuint QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage, QuotaPeakNonPagedPoolUsage, QuotaNonPagedPoolUsage;
+    public nuint PagefileUsage, PeakPagefileUsage, PrivateUsage;
+    public nuint PrivateWorkingSetSize, SharedCommitUsage;
+  }
+
+  private static long GetPrivateWorkingSet(Process proc)
+  {
+    try
+    {
+      int status = NtQueryInformationProcess(proc.Handle, 3, out var counters, Marshal.SizeOf<VM_COUNTERS_EX2>(), out _);
+      if (status == 0) return (long)counters.PrivateWorkingSetSize;
+    }
+    catch { }
+    return proc.PrivateMemorySize64; // fallback
+  }
+
   private sealed record ProcessSnapshot(int Id, string Name, TimeSpan CpuTime, long MemBytes);
 
   private static readonly HashSet<string> Excluded = new(StringComparer.OrdinalIgnoreCase)
@@ -942,7 +967,7 @@ internal sealed class TopProcessSampler
       try
       {
         if (Excluded.Contains(proc.ProcessName)) { proc.Dispose(); continue; }
-        var snap = new ProcessSnapshot(proc.Id, proc.ProcessName, proc.TotalProcessorTime, proc.WorkingSet64);
+        var snap = new ProcessSnapshot(proc.Id, proc.ProcessName, proc.TotalProcessorTime, GetPrivateWorkingSet(proc));
         snapshots[proc.Id] = snap;
       }
       catch
@@ -957,18 +982,26 @@ internal sealed class TopProcessSampler
 
     if (snapshots.Count == 0) { _prev = snapshots; _prevMs = nowMs; return null; }
 
-    // Memory: can always determine top from a single snapshot
-    string? topMemName = null;
-    double topMemMB = -1;
-    int topMemId = -1;
+    // Memory: sum by process name, pick name with highest total
+    var memSumByName = new Dictionary<string, (double totalMB, int bestId, double bestMB)>(StringComparer.OrdinalIgnoreCase);
     foreach (var snap in snapshots.Values)
     {
       double mb = snap.MemBytes / (1024.0 * 1024.0);
-      if (mb > topMemMB)
+      if (memSumByName.TryGetValue(snap.Name, out var existing))
+        memSumByName[snap.Name] = (existing.totalMB + mb, mb > existing.bestMB ? snap.Id : existing.bestId, Math.Max(mb, existing.bestMB));
+      else
+        memSumByName[snap.Name] = (mb, snap.Id, mb);
+    }
+    string? topMemName = null;
+    double topMemMB = -1;
+    int topMemId = -1;
+    foreach (var (name, data) in memSumByName)
+    {
+      if (data.totalMB > topMemMB)
       {
-        topMemMB = mb;
-        topMemName = snap.Name;
-        topMemId = snap.Id;
+        topMemMB = data.totalMB;
+        topMemName = name;
+        topMemId = data.bestId;
       }
     }
 
@@ -996,14 +1029,10 @@ internal sealed class TopProcessSampler
       }
     }
 
-    // Build per-process memory map for momentum lookup
+    // Build per-process memory map for momentum lookup (summed by name)
     var memByName = new Dictionary<string, (double mb, int id)>(StringComparer.OrdinalIgnoreCase);
-    foreach (var snap in snapshots.Values)
-    {
-      double mb = snap.MemBytes / (1024.0 * 1024.0);
-      if (!memByName.TryGetValue(snap.Name, out var existing) || mb > existing.mb)
-        memByName[snap.Name] = (mb, snap.Id);
-    }
+    foreach (var (name, data) in memSumByName)
+      memByName[name] = (data.totalMB, data.bestId);
 
     _prev = snapshots;
     _prevMs = nowMs;

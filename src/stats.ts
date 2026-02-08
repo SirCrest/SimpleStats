@@ -1156,37 +1156,94 @@ class StatsPoller {
 
     getNetworkTransfer(periodSec: number, iface?: string): { rxBytes: number | null; txBytes: number | null; totalBytes: number | null } {
     const key = iface && iface.length > 0 ? iface : "total";
-    const history =
-      periodSec <= 60 ? this.netHistorySeconds.get(key) : this.netHistoryMinutes.get(key);
+    const seconds = this.netHistorySeconds.get(key);
+
+    if (periodSec <= 60) {
+      return this.computeTransferFromHistory(seconds, periodSec);
+    }
+
+    // Composite: use minute-level start + second-level end for responsive updates
+    const minutes = this.netHistoryMinutes.get(key);
+
+    // Best case: start from minutes or seconds (whichever is older), end from seconds
+    if (seconds && seconds.length >= 1) {
+      const cutoff = Date.now() - periodSec * 1000;
+      const end = seconds[seconds.length - 1];
+
+      // Find the best (oldest valid) start point across both data sources
+      let start: { t: number; rx: number; tx: number } | null = null;
+
+      // Check minutes for an older start
+      if (minutes && minutes.length >= 2) {
+        let candidate = minutes[0];
+        for (const entry of minutes) {
+          if (entry.t <= cutoff) { candidate = entry; continue; }
+          candidate = entry;
+          break;
+        }
+        start = candidate;
+      }
+
+      // Check seconds for an older start (e.g. shortly after minute boundary)
+      if (seconds.length >= 2) {
+        const secStart = seconds[0];
+        if (!start || secStart.t < start.t) {
+          start = secStart;
+        }
+      }
+
+      if (start && end.t >= start.t) {
+        const rxDelta = end.rx - start.rx;
+        const txDelta = end.tx - start.tx;
+        // Counter reset detection: if either delta is negative, old data has
+        // stale cumulative counters from a previous session — fall through.
+        if (rxDelta >= 0 && txDelta >= 0) {
+          return { rxBytes: rxDelta, txBytes: txDelta, totalBytes: rxDelta + txDelta };
+        }
+      }
+    }
+
+    // Fallback: seconds-only (fresh install, no minute data yet — show what we have)
+    if (seconds && seconds.length >= 2) {
+      return this.computeTransferFromHistory(seconds, 60);
+    }
+
+    // Fallback: minutes-only (no seconds data)
+    if (minutes && minutes.length >= 2) {
+      return this.computeTransferFromHistory(minutes, periodSec);
+    }
+
+    // No data at all
+    if ((seconds && seconds.length === 1) || (minutes && minutes.length === 1)) {
+      return { rxBytes: 0, txBytes: 0, totalBytes: 0 };
+    }
+    return { rxBytes: null, txBytes: null, totalBytes: null };
+  }
+
+  private computeTransferFromHistory(
+    history: Array<{ t: number; rx: number; tx: number }> | undefined,
+    periodSec: number
+  ): { rxBytes: number | null; txBytes: number | null; totalBytes: number | null } {
     if (!history || history.length === 0) {
       return { rxBytes: null, txBytes: null, totalBytes: null };
     }
     if (history.length < 2) {
       return { rxBytes: 0, txBytes: 0, totalBytes: 0 };
     }
-
     const cutoff = Date.now() - periodSec * 1000;
     let start = history[0];
     for (const entry of history) {
-      if (entry.t <= cutoff) {
-        start = entry;
-        continue;
-      }
+      if (entry.t <= cutoff) { start = entry; continue; }
       start = entry;
       break;
     }
-
     const end = history[history.length - 1];
     if (end.t < start.t) {
       return { rxBytes: 0, txBytes: 0, totalBytes: 0 };
     }
     const rxBytes = Math.max(0, end.rx - start.rx);
     const txBytes = Math.max(0, end.tx - start.tx);
-    return {
-      rxBytes,
-      txBytes,
-      totalBytes: rxBytes + txBytes
-    };
+    return { rxBytes, txBytes, totalBytes: rxBytes + txBytes };
   }
 
   private updateGroupCount(group: MetricGroup, delta: number): void {

@@ -1,20 +1,15 @@
 # Release Notes
 
-## v0.9.2.1
+## v0.9.3.0 (pending)
 
-- Fixed network rate keys (NET UP/DOWN) dropping to 0Mbps when dragging any network action to another key position.
-- Graph history now carries over when dragging keys between positions (settingsKey-based fallback lookup).
-- Fixed race condition where network polling interest could momentarily drop to zero during drag, causing cache invalidation.
-- Keys render immediately on appear instead of waiting for the next poll tick.
-- Renamed "Last 60 minutes" to "Last hour" in the transfer period selector.
-
-## v0.9.2.0
-
-### Why
-- Aggressive bump for cumulative user-visible improvements in helper reliability, process display stability, and metric readability.
-- Includes Claude's low-speed disk throughput graphing improvement so small read/write activity is represented more clearly.
-
-### Highlights
-- Top-process display stability improvements (momentum scoring + friendlier process naming/icons).
-- Faster helper startup path for CPU/disk metrics.
-- Release packaging automation and cleanup of generated artifacts in git tracking.
+- Added category icon with stacked area chart visualization and action icon with single line graph.
+- Added Action icon with single cyan bezier line graph. Feels Shmoove.
+- 1H and 24H network transfer totals now update every poll tick using composite sampling (minute-level history + live second-level tail).
+- 1H/24H totals no longer sit at 0B after a fresh install — they immediately match the 1M value until minute data accumulates.
+- Added counter-reset detection so stale history from a previous session doesn't produce 0B totals.
+- Removed the flat graph line from network transfer total keys — they now show label and value only.
+- Network transfer totals now display proper unit suffixes (KB, MB, GB, TB) instead of shorthand (K, M, G, T).
+- Disk read/write graphs now use a 10 MB/s minimum scale so low activity doesn't dominate the graph.
+- Top memory process now aggregates all instances of the same process name (e.g., all Chrome.exe processes combined).
+- Top memory process now uses Private Working Set (matching Task Manager) instead of total working set.
+- Top memory values now display full unit suffixes (MB, GB) instead of shorthand (M, G).

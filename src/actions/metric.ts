@@ -716,6 +716,19 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
     `.trim();
   }
 
+  // No-graph layout: label + value only (e.g. net-total)
+  if (display.graphValue === null && !history.getValues().some((v) => v !== null)) {
+    return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
+      <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
+      <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" font-weight="700" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
+      <text x="${TEXT_LEFT}" y="${VALUE_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${value}</text>
+    </svg>
+    `.trim();
+  }
+
   const lineColor = warnColor ?? baseStyle.line;
   const fillColor = baseStyle.fill;
 
@@ -881,8 +894,8 @@ function formatTopCpu(name: string | null, pct: number | null): string {
 
 function formatTopMem(name: string | null, mb: number | null): string {
   if (!name || mb === null || !Number.isFinite(mb)) return "--";
-  if (mb >= 1024) return `${name} ${(mb / 1024).toFixed(1)}G`;
-  return `${name} ${Math.round(mb)}M`;
+  if (mb >= 1024) return `${name} ${(mb / 1024).toFixed(1)}GB`;
+  return `${name} ${Math.round(mb)}MB`;
 }
 
 function formatClock(value: Date): string {
@@ -892,7 +905,7 @@ function formatClock(value: Date): string {
 
 function formatBytesShort(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "--";
-  const units = ["B", "K", "M", "G", "T"];
+  const units = ["B", "KB", "MB", "GB", "TB"];
   let size = Math.max(0, value);
   let unitIndex = 0;
   while (size >= 1024 && unitIndex < units.length - 1) {
@@ -1183,7 +1196,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         value: formatRateMB(readMB),
         graphValue: readMB,
         graphMax: null,
-        graphMinMax: null,
+        graphMinMax: 10,
         graphMin: 0
       };
     }
@@ -1196,7 +1209,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         value: formatRateMB(writeMB),
         graphValue: writeMB,
         graphMax: null,
-        graphMinMax: null,
+        graphMinMax: 10,
         graphMin: 0
       };
     }
@@ -1261,7 +1274,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         }
       }
       const memVal = tp.memMB !== null && Number.isFinite(tp.memMB)
-        ? (tp.memMB >= 1024 ? `${(tp.memMB / 1024).toFixed(1)}G` : `${Math.round(tp.memMB)}M`)
+        ? (tp.memMB >= 1024 ? `${(tp.memMB / 1024).toFixed(1)}GB` : `${Math.round(tp.memMB)}MB`)
         : "--";
       return {
         label: "TOP MEM",
