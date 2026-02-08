@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("SimpleStatsHelper")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Release")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+cdd4304cfe4176ce5fb9df4060ca81e6c75e967e")]
 [assembly: System.Reflection.AssemblyProductAttribute("SimpleStatsHelper")]
 [assembly: System.Reflection.AssemblyTitleAttribute("SimpleStatsHelper")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

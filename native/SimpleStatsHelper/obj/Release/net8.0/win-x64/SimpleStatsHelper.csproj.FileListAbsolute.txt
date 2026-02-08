@@ -401,3 +401,4 @@ C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\msquic.dll
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\Microsoft.Win32.SystemEvents.dll
 C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\bin\Release\net8.0\win-x64\System.Drawing.Common.dll
+C:\users\crest\source\repos\SimpleStats\native\SimpleStatsHelper\obj\Release\net8.0\win-x64\SimpleStatsHelper.sourcelink.json

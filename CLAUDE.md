@@ -27,7 +27,7 @@ Single configurable action that displays system metrics with inline graphs and a
 - Smart defaults for device selection (GPU 0, C: drive, all network interfaces)
 - CPU per-core stepper with max core count from the system
 - Windows 10 Build 10240+ required (shows "WIN10+ REQ" on older versions)
-- Alert threshold colors: optional warning (amber) and critical (red) thresholds for percent-based metrics
+- Alert threshold color: optional single threshold (red) for percent-based metrics
 
 ### Metrics Supported
 
@@ -141,7 +141,7 @@ SimpleStats/
 
 ## Known Limitations
 
-- Network total transfer persists locally, but if Stream Deck is closed longer than the selected window, totals show as -- until enough new samples are collected.
+- Network total transfer persists locally, but after long downtime totals may show `0B` until enough new samples are collected.
 - Disk read/write throughput uses per-drive counters on Windows when available; falls back to totals if unavailable.
 - GPU metrics require NVIDIA GPU with NVML-compatible drivers; non-NVIDIA GPUs are not supported.
 - Graph history resets if the Stream Deck app is closed.

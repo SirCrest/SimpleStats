@@ -92,4 +92,5 @@ If Windows is below the required version, keys show `WIN10+ REQ`.
 
 ## Notes
 - Network transfer totals are only recorded while the Stream Deck app/plugin is running.
-- If data is temporarily unavailable, tiles show `--` until the next valid sample.
+- Metrics generally show `--` when data is temporarily unavailable.
+- Network totals can show `0B` until at least two samples exist for the selected window.

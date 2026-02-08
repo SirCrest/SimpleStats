@@ -511,6 +511,7 @@ internal sealed class NvidiaGpuSampler
   private bool _available;
   private readonly Dictionary<uint, ulong> _lastSeenTimestamp = new();
   private readonly Dictionary<uint, (string name, double pct, long tickMs, uint pid)> _lastComputeResult = new();
+  private readonly Dictionary<uint, Dictionary<string, double>> _gpuComputeScores = new();
 
   private static string? GetProcessName(uint pid)
   {
@@ -582,12 +583,45 @@ internal sealed class NvidiaGpuSampler
 
       if (bestPid == 0 || bestSmUtil == 0)
       {
+        // No GPU activity — still apply momentum decay
+        if (!_gpuComputeScores.TryGetValue(deviceIndex, out var scores0))
+        {
+          scores0 = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+          _gpuComputeScores[deviceIndex] = scores0;
+        }
+        var decayWinner = MomentumHelper.Apply(scores0, null, 0, 100.0);
+        if (decayWinner != null && _lastComputeResult.TryGetValue(deviceIndex, out var prev) &&
+            prev.name.Equals(decayWinner, StringComparison.OrdinalIgnoreCase))
+        {
+          return (prev.name, prev.pct, prev.pid);
+        }
         _lastComputeResult.Remove(deviceIndex);
         return ("None", 0.0, 0);
       }
 
       var name = GetProcessName(bestPid);
       if (name == null) return ("None", 0.0, 0);
+
+      // Apply momentum scoring
+      if (!_gpuComputeScores.TryGetValue(deviceIndex, out var scores))
+      {
+        scores = new Dictionary<string, double>(StringComparer.OrdinalIgnoreCase);
+        _gpuComputeScores[deviceIndex] = scores;
+      }
+      var stickyName = MomentumHelper.Apply(scores, name, bestSmUtil, 100.0);
+
+      if (stickyName != null && !stickyName.Equals(name, StringComparison.OrdinalIgnoreCase))
+      {
+        // Sticky winner differs from raw — use cached data if still valid
+        if (_lastComputeResult.TryGetValue(deviceIndex, out var cached) &&
+            cached.name.Equals(stickyName, StringComparison.OrdinalIgnoreCase))
+        {
+          return (cached.name, cached.pct, cached.pid);
+        }
+        // Sticky winner no longer valid, remove and use raw
+        scores.Remove(stickyName);
+      }
+
       _lastComputeResult[deviceIndex] = (name, (double)bestSmUtil, now, bestPid);
       return (name, (double)bestSmUtil, bestPid);
     }
@@ -702,6 +736,42 @@ internal sealed class NvidiaGpuSampler
   }
 }
 
+internal static class MomentumHelper
+{
+  /// <summary>
+  /// Applies value-weighted momentum scoring to stabilize "top process" display.
+  /// Decay all scores by 0.8, award the raw winner proportional to its value,
+  /// prune low scores, and return the highest scorer.
+  /// </summary>
+  public static string? Apply(Dictionary<string, double> scores, string? rawWinner, double rawValue, double maxValue)
+  {
+    // Decay all
+    foreach (var key in scores.Keys.ToList())
+      scores[key] *= 0.8;
+    // Award raw winner proportional to value (0.0 to 1.0)
+    if (rawWinner != null && maxValue > 0)
+    {
+      scores.TryGetValue(rawWinner, out double current);
+      scores[rawWinner] = current + Math.Clamp(rawValue / maxValue, 0, 1);
+    }
+    // Prune entries with negligible score
+    foreach (var key in scores.Keys.ToList())
+      if (scores[key] < 0.1) scores.Remove(key);
+    // Return highest scorer
+    string? best = null;
+    double bestScore = -1;
+    foreach (var (name, score) in scores)
+    {
+      if (score > bestScore)
+      {
+        bestScore = score;
+        best = name;
+      }
+    }
+    return best;
+  }
+}
+
 internal sealed class TopProcessSampler
 {
   private sealed record ProcessSnapshot(int Id, string Name, TimeSpan CpuTime, long MemBytes);
@@ -714,6 +784,22 @@ internal sealed class TopProcessSampler
   private Dictionary<int, ProcessSnapshot>? _prev;
   private long _prevMs;
   private readonly int _logicalProcessors = Environment.ProcessorCount;
+  private readonly Dictionary<string, double> _cpuScores = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, double> _memScores = new(StringComparer.OrdinalIgnoreCase);
+  private readonly double _totalMemMB;
+
+  public TopProcessSampler()
+  {
+    try
+    {
+      var gcInfo = GC.GetGCMemoryInfo();
+      _totalMemMB = gcInfo.TotalAvailableMemoryBytes / (1024.0 * 1024.0);
+    }
+    catch
+    {
+      _totalMemMB = 16384; // 16GB fallback
+    }
+  }
 
   public TopProcessPayload? Sample(long nowMs)
   {
@@ -754,44 +840,97 @@ internal sealed class TopProcessSampler
     }
 
     // CPU: need two snapshots to compute delta
-    string? topCpuName = null;
-    double? topCpuPct = null;
-    int topCpuId = -1;
+    // Build per-process CPU% map for momentum lookup
+    string? rawCpuName = null;
+    double rawCpuPct = 0;
+    var cpuByName = new Dictionary<string, (double pct, int id)>(StringComparer.OrdinalIgnoreCase);
     if (_prev != null && nowMs > _prevMs)
     {
       double elapsedMs = nowMs - _prevMs;
-      double bestCpuPct = -1;
       foreach (var (id, curr) in snapshots)
       {
         if (!_prev.TryGetValue(id, out var prev)) continue;
         double cpuMs = (curr.CpuTime - prev.CpuTime).TotalMilliseconds;
         double pct = cpuMs / elapsedMs / _logicalProcessors * 100.0;
-        if (pct > bestCpuPct)
+        // Track best per name (multiple PIDs may share a name)
+        if (!cpuByName.TryGetValue(curr.Name, out var existing) || pct > existing.pct)
+          cpuByName[curr.Name] = (pct, id);
+        if (pct > rawCpuPct)
         {
-          bestCpuPct = pct;
-          topCpuName = curr.Name;
-          topCpuId = id;
+          rawCpuPct = pct;
+          rawCpuName = curr.Name;
         }
       }
-      if (topCpuName != null)
-      {
-        topCpuPct = Math.Round(bestCpuPct, 1);
-      }
+    }
+
+    // Build per-process memory map for momentum lookup
+    var memByName = new Dictionary<string, (double mb, int id)>(StringComparer.OrdinalIgnoreCase);
+    foreach (var snap in snapshots.Values)
+    {
+      double mb = snap.MemBytes / (1024.0 * 1024.0);
+      if (!memByName.TryGetValue(snap.Name, out var existing) || mb > existing.mb)
+        memByName[snap.Name] = (mb, snap.Id);
     }
 
     _prev = snapshots;
     _prevMs = nowMs;
 
-    if (topCpuName == null && topMemName == null) return null;
+    // Apply momentum scoring for CPU
+    string? topCpuName = null;
+    double? topCpuPct = null;
+    int topCpuId = -1;
+    if (rawCpuName != null)
+    {
+      var stickyCpu = MomentumHelper.Apply(_cpuScores, rawCpuName, rawCpuPct, 100.0);
+      if (stickyCpu != null && cpuByName.TryGetValue(stickyCpu, out var stickyData))
+      {
+        topCpuName = stickyCpu;
+        topCpuPct = Math.Round(stickyData.pct, 1);
+        topCpuId = stickyData.id;
+      }
+      else
+      {
+        // Sticky winner exited — remove and use raw
+        if (stickyCpu != null) _cpuScores.Remove(stickyCpu);
+        topCpuName = rawCpuName;
+        topCpuPct = Math.Round(rawCpuPct, 1);
+        if (cpuByName.TryGetValue(rawCpuName, out var rawData))
+          topCpuId = rawData.id;
+      }
+    }
+
+    // Apply momentum scoring for memory
+    string? topMemName2 = null;
+    double topMemMB2 = -1;
+    int topMemId2 = -1;
+    if (topMemName != null)
+    {
+      var stickyMem = MomentumHelper.Apply(_memScores, topMemName, topMemMB, _totalMemMB);
+      if (stickyMem != null && memByName.TryGetValue(stickyMem, out var stickyData))
+      {
+        topMemName2 = stickyMem;
+        topMemMB2 = stickyData.mb;
+        topMemId2 = stickyData.id;
+      }
+      else
+      {
+        if (stickyMem != null) _memScores.Remove(stickyMem);
+        topMemName2 = topMemName;
+        topMemMB2 = topMemMB;
+        topMemId2 = topMemId;
+      }
+    }
+
+    if (topCpuName == null && topMemName2 == null) return null;
 
     string? cpuIcon = topCpuId > 0 ? IconHelper.GetIconBase64(topCpuId) : null;
-    string? memIcon = topMemId > 0 ? IconHelper.GetIconBase64(topMemId) : null;
+    string? memIcon = topMemId2 > 0 ? IconHelper.GetIconBase64(topMemId2) : null;
 
     return new TopProcessPayload(
       cpuName: Truncate(topCpuName, 12),
       cpuPct: topCpuPct,
-      memName: Truncate(topMemName, 12),
-      memMB: topMemMB >= 0 ? Math.Round(topMemMB, 0) : null,
+      memName: Truncate(topMemName2, 12),
+      memMB: topMemMB2 >= 0 ? Math.Round(topMemMB2, 0) : null,
       cpuIconBase64: cpuIcon,
       memIconBase64: memIcon
     );
@@ -841,6 +980,7 @@ internal static class Program
 {
   private const int DefaultIntervalMs = 1000;
   private const int MinIntervalMs = 250;
+  private const int DiskCacheRefreshMs = 10 * 60 * 1000;
 
   public static async Task<int> Main(string[] args)
   {
@@ -996,16 +1136,47 @@ internal static class Program
       }
     }, cts.Token);
 
+    int forceDiskRefreshFlag = 1;
+    var disksCache = new List<DiskItem>();
+    long disksCacheAt = 0;
+
+    _ = Task.Run(async () =>
+    {
+      while (!cts.IsCancellationRequested)
+      {
+        string? line;
+        try
+        {
+          line = await Console.In.ReadLineAsync();
+        }
+        catch
+        {
+          break;
+        }
+
+        if (line == null)
+        {
+          break;
+        }
+
+        var command = line.Trim();
+        if (command.Equals("rescan_disks", StringComparison.OrdinalIgnoreCase))
+        {
+          Interlocked.Exchange(ref forceDiskRefreshFlag, 1);
+          Console.Error.WriteLine("[SimpleStatsHelper] command rescan_disks");
+        }
+      }
+    }, cts.Token);
+
     var stdoutWriter = new StreamWriter(Console.OpenStandardOutput()) { AutoFlush = true };
     Console.SetOut(stdoutWriter);
     Console.Error.WriteLine($"[SimpleStatsHelper] started interval={intervalMs}ms pid={Environment.ProcessId}");
 
-    bool firstLoop = true;
     while (!cts.IsCancellationRequested)
     {
       long now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
       var items = new List<NetItem>();
-      var disks = new List<DiskItem>();
+      var disks = disksCache;
 
       try
       {
@@ -1035,43 +1206,13 @@ internal static class Program
         // Ignore enumeration errors.
       }
 
-      if (!firstLoop)
+      bool forceDiskRefresh = Interlocked.Exchange(ref forceDiskRefreshFlag, 0) == 1;
+      bool diskCacheStale = disksCacheAt <= 0 || now - disksCacheAt >= DiskCacheRefreshMs;
+      if (forceDiskRefresh || diskCacheStale)
       {
-        try
-        {
-          foreach (var drive in DriveInfo.GetDrives())
-          {
-            try
-            {
-              if (!drive.IsReady)
-              {
-                continue;
-              }
-
-              var name = drive.Name ?? string.Empty;
-              var mount = name.TrimEnd('\\');
-              var id = mount;
-              var fs = drive.DriveFormat ?? string.Empty;
-              var label = drive.VolumeLabel ?? string.Empty;
-              disks.Add(new DiskItem(
-                id: id,
-                mount: mount,
-                fs: fs,
-                totalBytes: drive.TotalSize,
-                freeBytes: drive.AvailableFreeSpace,
-                label: label
-              ));
-            }
-            catch
-            {
-              // Skip drives that fail to report stats.
-            }
-          }
-        }
-        catch
-        {
-          // Ignore drive enumeration errors.
-        }
+        disksCache = ReadDiskItems();
+        disksCacheAt = now;
+        disks = disksCache;
       }
 
       CpuPayload? cpu;
@@ -1111,8 +1252,6 @@ internal static class Program
         }
         Console.Error.WriteLine($"[SimpleStatsHelper] serialize error type={ex.GetType().Name} message={message}");
       }
-      firstLoop = false;
-
       try
       {
         await Task.Delay(intervalMs, cts.Token);
@@ -1124,5 +1263,46 @@ internal static class Program
     }
 
     return 0;
+  }
+
+  private static List<DiskItem> ReadDiskItems()
+  {
+    var disks = new List<DiskItem>();
+    try
+    {
+      foreach (var drive in DriveInfo.GetDrives())
+      {
+        try
+        {
+          if (!drive.IsReady)
+          {
+            continue;
+          }
+
+          var name = drive.Name ?? string.Empty;
+          var mount = name.TrimEnd('\\');
+          var id = mount;
+          var fs = drive.DriveFormat ?? string.Empty;
+          var label = drive.VolumeLabel ?? string.Empty;
+          disks.Add(new DiskItem(
+            id: id,
+            mount: mount,
+            fs: fs,
+            totalBytes: drive.TotalSize,
+            freeBytes: drive.AvailableFreeSpace,
+            label: label
+          ));
+        }
+        catch
+        {
+          // Skip drives that fail to report stats.
+        }
+      }
+    }
+    catch
+    {
+      // Ignore drive enumeration errors.
+    }
+    return disks;
   }
 }

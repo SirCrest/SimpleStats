@@ -338,6 +338,7 @@ function syncCpuCoreLimits(value) {
 const wiredHosts = new WeakSet();
 const wiredInner = new WeakMap();
 const wiredButtonTargets = new WeakMap();
+const wiredPlainListeners = new WeakMap();
 
 function getInnerControl(element) {
   if (!element) return null;
@@ -387,6 +388,21 @@ function wireButton(element, handler) {
   if (!inner) {
     requestAnimationFrame(() => wireButton(element, handler));
   }
+}
+
+function wirePlainListener(element, eventName, handler) {
+  if (!element) return;
+  const existing = wiredPlainListeners.get(element);
+  const previous = existing && existing[eventName];
+  if (previous === handler) return;
+  if (typeof previous === "function") {
+    element.removeEventListener(eventName, previous);
+  }
+  element.addEventListener(eventName, handler);
+  wiredPlainListeners.set(element, {
+    ...(existing || {}),
+    [eventName]: handler
+  });
 }
 
 function updateVisibility(group, metric, cpuPerCore) {
@@ -684,15 +700,15 @@ function wireAll() {
   if (warnThresholdEl) wireInput(warnThresholdEl, handleWarnThresholdChange);
   if (topThresholdEl) wireInput(topThresholdEl, handleTopThresholdChange);
   // Wire plain refresh buttons (not sdpi-button, so direct addEventListener)
-  if (rescanDisksEl) rescanDisksEl.addEventListener("click", handleRescanDisks);
-  if (rescanInterfacesEl) rescanInterfacesEl.addEventListener("click", handleRescanInterfaces);
+  if (rescanDisksEl) wirePlainListener(rescanDisksEl, "click", handleRescanDisks);
+  if (rescanInterfacesEl) wirePlainListener(rescanInterfacesEl, "click", handleRescanInterfaces);
   // Wire plain select elements for GPU, disk, network
   const gpuSelect = document.getElementById("gpu");
   const diskSelect = document.getElementById("disk");
   const netSelect = document.getElementById("net");
-  if (gpuSelect) gpuSelect.addEventListener("change", handleGpuChange);
-  if (diskSelect) diskSelect.addEventListener("change", handleDiskChange);
-  if (netSelect) netSelect.addEventListener("change", handleNetChange);
+  if (gpuSelect) wirePlainListener(gpuSelect, "change", handleGpuChange);
+  if (diskSelect) wirePlainListener(diskSelect, "change", handleDiskChange);
+  if (netSelect) wirePlainListener(netSelect, "change", handleNetChange);
 }
 
 function extractSettings(value) {
@@ -717,4 +733,3 @@ streamDeckClient.didReceiveSettings.subscribe((ev) => {
 });
 
 init();
-

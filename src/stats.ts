@@ -127,6 +127,7 @@ const HELPER_STALE_MS = 5000;
 const HELPER_STARTUP_MS = 15000;
 const HELPER_RETRY_DELAY_MS = 5000;
 const HELPER_EXE_NAME = "SimpleStatsHelper.exe";
+const HELPER_CMD_RESCAN_DISKS = "rescan_disks";
 const HELPER_PATHS = (() => {
   const paths: string[] = [];
   const pluginDir = path.resolve(__dirname, "..");
@@ -430,7 +431,7 @@ class SimpleStatsHelper {
       const child = spawn(
         this.helperPath,
         ["--interval", String(HELPER_INTERVAL_MS)],
-        { windowsHide: true }
+        { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }
       );
       this.child = child;
       this.startedAt = Date.now();
@@ -505,6 +506,26 @@ class SimpleStatsHelper {
     });
 
     return true;
+  }
+
+  requestDiskRescan(allowStart = false): boolean {
+    if (allowStart && !this.child && !this.ensureRunning()) {
+      return false;
+    }
+    const stdin = this.child?.stdin;
+    if (!stdin || stdin.destroyed || !stdin.writable) {
+      return false;
+    }
+    try {
+      stdin.write(`${HELPER_CMD_RESCAN_DISKS}\n`);
+      return true;
+    } catch (err) {
+      writePerfLog("helperCommandError", {
+        command: HELPER_CMD_RESCAN_DISKS,
+        error: String(err)
+      });
+      return false;
+    }
   }
 
   stop(reason: StopReason = "manual"): void {
@@ -908,6 +929,7 @@ class StatsPoller {
   private helperDiskPerfMissing = false;
   private helperMemMissing = false;
   private helperGpuMissing = false;
+  private helperAllowed = false;
   private gpuPollAt = 0;
   private readonly helper = new SimpleStatsHelper();
 
@@ -941,12 +963,11 @@ class StatsPoller {
     if (!isMetricGroup(group)) return;
     const prev = this.actionGroups.get(actionId);
     if (prev === group) return;
-    if (prev) {
-      this.actionGroups.delete(actionId);
-      this.updateGroupCount(prev, -1);
-    }
     this.actionGroups.set(actionId, group);
     this.updateGroupCount(group, 1);
+    if (prev) {
+      this.updateGroupCount(prev, -1);
+    }
   }
 
   clearInterest(actionId: string): void {
@@ -954,9 +975,20 @@ class StatsPoller {
     if (!prev) return;
     this.actionGroups.delete(actionId);
     this.updateGroupCount(prev, -1);
+    this.stopHelperIfIdle();
   }
 
   async refreshNow(options?: RefreshOptions): Promise<StatsSnapshot> {
+    const forceGroups = options?.forceGroups ?? [];
+    if (forceGroups.includes("disk")) {
+      const started = this.helper.requestDiskRescan(this.hasActionInterest());
+      if (!started) {
+        writePerfLog("helperCommandSkipped", {
+          command: HELPER_CMD_RESCAN_DISKS,
+          hasActionInterest: this.hasActionInterest()
+        });
+      }
+    }
     await this.tick(options);
     return this.snapshot;
   }
@@ -1007,47 +1039,61 @@ class StatsPoller {
     }
   }
 
+  private isHelperBackedGroup(group: MetricGroup): boolean {
+    return group !== "system";
+  }
+
+  private hasActionInterest(): boolean {
+    return this.actionGroups.size > 0;
+  }
+
+  private hasHelperBackedInterest(): boolean {
+    return this.groupCounts.cpu > 0 ||
+      this.groupCounts.gpu > 0 ||
+      this.groupCounts.memory > 0 ||
+      this.groupCounts.disk > 0 ||
+      this.groupCounts.network > 0;
+  }
+
+  private resetHelperStatusFlags(): void {
+    this.helperFailed = false;
+    this.helperCpuMissing = false;
+    this.helperDiskPerfMissing = false;
+    this.helperMemMissing = false;
+    this.helperGpuMissing = false;
+  }
+
+  private clearHelperCaches(): void {
+    this.netStatsCache = null;
+    this.netIfacesCache = null;
+    this.fsSizeCache = null;
+    this.helperLastByIface.clear();
+    this.helperSampleAt = 0;
+  }
+
+  private stopHelperIfIdle(): void {
+    if (this.hasHelperBackedInterest()) return;
+    this.helperAllowed = false;
+    this.helper.stop();
+    this.clearHelperCaches();
+  }
+
   private onGroupActivated(group: MetricGroup): void {
     if (group === "disk") {
       this.fsSizeAt = 0;
     }
-    if (group === "network" || group === "disk") {
-      if (group === "network") {
-        this.netIfacesAt = 0;
-        this.netStatsAt = 0;
-      }
-      this.helperFailed = false;
-      this.helperCpuMissing = false;
-      this.helperDiskPerfMissing = false;
-      this.helperMemMissing = false;
-      this.helperGpuMissing = false;
+    if (group === "network") {
+      this.netIfacesAt = 0;
+      this.netStatsAt = 0;
     }
-    if (group === "cpu") {
-      this.helperFailed = false;
-      this.helperCpuMissing = false;
-      this.helperDiskPerfMissing = false;
-      this.helperMemMissing = false;
-      this.helperGpuMissing = false;
-    }
-    if (group === "memory" || group === "gpu") {
-      this.helperFailed = false;
-      this.helperCpuMissing = false;
-      this.helperDiskPerfMissing = false;
-      this.helperMemMissing = false;
-      this.helperGpuMissing = false;
+    if (this.isHelperBackedGroup(group)) {
+      this.resetHelperStatusFlags();
     }
   }
 
   private onGroupDeactivated(group: MetricGroup): void {
-    if (group === "network" || group === "disk" || group === "cpu") {
-      if (this.groupCounts.network === 0 && this.groupCounts.disk === 0 && this.groupCounts.cpu === 0) {
-        this.helper.stop();
-        this.netStatsCache = null;
-        this.netIfacesCache = null;
-        this.fsSizeCache = null;
-        this.helperLastByIface.clear();
-        this.helperSampleAt = 0;
-      }
+    if (this.isHelperBackedGroup(group)) {
+      this.stopHelperIfIdle();
     }
   }
 
@@ -1068,7 +1114,9 @@ class StatsPoller {
     clearInterval(this.timer);
     this.timer = undefined;
     void this.persistNetHistory(true);
+    this.helperAllowed = false;
     this.helper.stop();
+    this.clearHelperCaches();
   }
 
   private emit(snapshot: StatsSnapshot) {
@@ -1108,6 +1156,9 @@ class StatsPoller {
   }
 
   private getHelperSnapshot(): HelperSnapshot | null {
+    if (!this.helperAllowed) {
+      return null;
+    }
     if (!this.helper.ensureRunning()) {
       this.markHelperFailed("helperUnavailable");
       return null;
@@ -1866,6 +1917,11 @@ class StatsPoller {
     const ensureDisk = ensureGroups.includes("disk");
     const forceNetwork = forceGroups.includes("network");
     const ensureNetwork = ensureGroups.includes("network");
+    const helperDemand = needCpu || needMemory || needGpu || needDisk || needNetwork;
+    this.helperAllowed = helperDemand && this.hasActionInterest();
+    if (!this.helperAllowed) {
+      this.stopHelperIfIdle();
+    }
 
     const tickStart = performance.now();
     try {
