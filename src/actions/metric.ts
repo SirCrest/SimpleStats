@@ -284,7 +284,7 @@ const DEFAULT_SETTINGS: NormalizedSettings = {
   netPeriodSec: 60,
   pollIntervalSec: 1,
   warnThreshold: 0,
-  topThreshold: 5
+  topThreshold: 0
 };
 
 const LEGACY_DEFAULTS: Record<string, Partial<Settings>> = {
@@ -609,22 +609,46 @@ function textLengthAttrs(text: string): string {
   return ` textLength="${TEXT_WIDTH}" lengthAdjust="spacingAndGlyphs"`;
 }
 
+function procTextLengthAttrs(text: string): string {
+  if (text.length <= 4) return "";
+  return ` textLength="${TEXT_WIDTH}" lengthAdjust="spacingAndGlyphs"`;
+}
+
+function wordBreak(text: string, targetIdx: number): number {
+  let breakIdx = text.lastIndexOf(" ", targetIdx);
+  if (breakIdx <= 0) breakIdx = text.indexOf(" ", targetIdx);
+  if (breakIdx <= 0) breakIdx = targetIdx;
+  return breakIdx;
+}
+
 function renderProcessName(name: string, color: string): string {
-  const escaped = escapeSvg(name);
-  if (name.length <= 18) {
-    return `<text x="36" y="48" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
-      font-size="9" font-weight="600" fill="${color}"${textLengthAttrs(name)}>${escaped}</text>`;
+  const font = `font-family="Segoe UI, Arial, sans-serif" font-weight="600" fill="${color}"`;
+  if (name.length <= 12) {
+    return `<text x="36" y="48" text-anchor="middle" ${font}
+      font-size="9"${procTextLengthAttrs(name)}>${escapeSvg(name)}</text>`;
   }
-  const mid = Math.ceil(name.length / 2);
-  let breakIdx = name.lastIndexOf(" ", mid);
-  if (breakIdx <= 0) breakIdx = name.indexOf(" ", mid);
-  if (breakIdx <= 0) breakIdx = mid;
-  const line1 = name.slice(0, breakIdx).trim();
-  const line2 = name.slice(breakIdx).trim();
-  return `<text x="36" y="44" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
-      font-size="8" font-weight="600" fill="${color}"${textLengthAttrs(line1)}>${escapeSvg(line1)}</text>
-    <text x="36" y="54" text-anchor="middle" font-family="Segoe UI, Arial, sans-serif"
-      font-size="8" font-weight="600" fill="${color}"${textLengthAttrs(line2)}>${escapeSvg(line2)}</text>`;
+  if (name.length <= 24) {
+    const brk = wordBreak(name, Math.ceil(name.length / 2));
+    const l1 = name.slice(0, brk).trim();
+    const l2 = name.slice(brk).trim();
+    return `<text x="36" y="44" text-anchor="middle" ${font}
+      font-size="8"${procTextLengthAttrs(l1)}>${escapeSvg(l1)}</text>
+    <text x="36" y="54" text-anchor="middle" ${font}
+      font-size="8"${procTextLengthAttrs(l2)}>${escapeSvg(l2)}</text>`;
+  }
+  // 3-line layout for very long names
+  const third = Math.ceil(name.length / 3);
+  const brk1 = wordBreak(name, third);
+  const brk2 = wordBreak(name, brk1 + 1 + Math.ceil((name.length - brk1) / 2));
+  const l1 = name.slice(0, brk1).trim();
+  const l2 = name.slice(brk1, brk2).trim();
+  const l3 = name.slice(brk2).trim();
+  return `<text x="36" y="41" text-anchor="middle" ${font}
+      font-size="7"${procTextLengthAttrs(l1)}>${escapeSvg(l1)}</text>
+    <text x="36" y="50" text-anchor="middle" ${font}
+      font-size="7"${procTextLengthAttrs(l2)}>${escapeSvg(l2)}</text>
+    <text x="36" y="59" text-anchor="middle" ${font}
+      font-size="7"${procTextLengthAttrs(l3)}>${escapeSvg(l3)}</text>`;
 }
 
 const PERCENT_METRICS: Set<MetricId> = new Set([

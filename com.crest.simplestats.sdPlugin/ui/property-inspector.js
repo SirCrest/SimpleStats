@@ -516,7 +516,7 @@ function applySettings(settings) {
     warnThresholdEl.value = Number.isFinite(warnVal) && warnVal > 0 ? String(warnVal) : "";
   }
   if (topThresholdEl) {
-    const rawTop = settings && settings.topThreshold !== undefined ? settings.topThreshold : 5;
+    const rawTop = settings && settings.topThreshold !== undefined ? settings.topThreshold : 0;
     const topVal = parseInt(rawTop, 10);
     topThresholdEl.value = Number.isFinite(topVal) && topVal > 0 ? String(topVal) : "";
   }

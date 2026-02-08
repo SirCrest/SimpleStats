@@ -2,6 +2,8 @@
 
 Stream Deck plugin for real-time Windows system performance monitoring with Task Manager-style metrics.
 
+> **Multi-agent repo:** See `AGENTS.md` for active work by each agent and coordination rules.
+
 ## Project Vision
 
 - Hardware integration: persistent system stats on Stream Deck keys
@@ -138,6 +140,68 @@ SimpleStats/
 - npm install
 - npm run build
 - npm run watch (auto-rebuild + plugin restart)
+- npm run package:release (build + helper publish + `.streamDeckPlugin` package in `dist/`)
+
+## Release Packaging Rule
+
+- Every GitHub release must include a packaged `.streamDeckPlugin` asset.
+- Automation: `.github/workflows/release-package.yml` runs on published releases, builds the plugin, packages it, and uploads `dist/*.streamDeckPlugin` to the release.
+- Manual fallback: `npm run package:release` then `gh release upload <tag> dist/<asset>.streamDeckPlugin --clobber`.
+
+## Version Proposal Workflow
+
+Follow `docs/VERSIONING_POLICY.md` for the canonical decision rules.
+
+### Requirement
+
+- For any task that modifies repo-tracked files, include a `Version Proposal` block at the end of the response.
+- Do not apply version edits automatically unless the user explicitly pre-authorized auto-apply.
+- If the task is read-only (no repo-tracked file changes), skip the version proposal.
+
+### Baseline Analysis Commands
+
+- `git describe --tags --abbrev=0`
+- `git log --oneline <base>..HEAD`
+- `git diff --name-status <base>..HEAD`
+
+### Required Version Proposal Block
+
+Use this exact field set:
+
+```md
+## Version Proposal
+- Baseline: <tag-or-no-tag>
+- Recommended Version: <x.y.z.w>
+- Bump Type: <major|minor|patch|build>
+- Impact Score (1-10): <n>
+- Why: <short rationale>
+- Alternatives:
+  - Conservative: <x.y.z.w + rationale>
+  - Aggressive: <x.y.z.w + rationale>
+- Decision Options:
+  1. Accept recommended
+  2. Propose another
+  3. Custom version: x.y.z.w
+```
+
+The full proposal should also include evidence from `docs/VERSIONING_POLICY.md`:
+
+- Commit range from baseline
+- Changed-file summary
+- User-visible additions list
+- Behavior/correctness fixes list
+- Non-runtime-only changes list
+
+### Decision Handling
+
+- Accept:
+  - Apply version updates according to cross-file mapping in `docs/VERSIONING_POLICY.md`
+  - Report exact file changes
+- Propose another:
+  - Generate a revised proposal with updated rationale
+- Custom:
+  - Validate and apply user-specified `x.y.z.w`
+  - Report exact file changes
 
 ## Known Limitations
 
