@@ -150,8 +150,6 @@ SimpleStats/
 
 ## Version Proposal Workflow
 
-Follow `docs/VERSIONING_POLICY.md` for the canonical decision rules.
-
 ### Requirement
 
 - For any task that modifies repo-tracked files, include a `Version Proposal` block at the end of the response.
@@ -184,18 +182,17 @@ Use this exact field set:
   3. Custom version: x.y.z.w
 ```
 
-The full proposal should also include evidence from `docs/VERSIONING_POLICY.md`:
+The full proposal should also include:
 
 - Commit range from baseline
 - Changed-file summary
 - User-visible additions list
 - Behavior/correctness fixes list
-- Non-runtime-only changes list
 
 ### Decision Handling
 
 - Accept:
-  - Apply version updates according to cross-file mapping in `docs/VERSIONING_POLICY.md`
+  - Apply version updates to `package.json` and `manifest.json`
   - Report exact file changes
 - Propose another:
   - Generate a revised proposal with updated rationale

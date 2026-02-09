@@ -1174,6 +1174,23 @@ internal static class IconHelper
   private const int MaxCacheEntries = 512;
   private static readonly BoundedConcurrentCache<string, string?> s_cache = new(MaxCacheEntries, StringComparer.OrdinalIgnoreCase);
 
+  [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+  private static extern bool QueryFullProcessImageName(IntPtr hProcess, int flags, StringBuilder buf, ref int size);
+
+  private static string? GetProcessImagePath(Process proc)
+  {
+    try { var p = proc.MainModule?.FileName; if (!string.IsNullOrEmpty(p)) return p; } catch { }
+    try
+    {
+      var buf = new StringBuilder(1024);
+      int size = buf.Capacity;
+      if (QueryFullProcessImageName(proc.Handle, 0, buf, ref size))
+        return buf.ToString();
+    }
+    catch { }
+    return null;
+  }
+
   public static string? GetIconBase64(int pid)
   {
     try
@@ -1182,8 +1199,7 @@ internal static class IconHelper
       var name = proc.ProcessName;
       if (string.IsNullOrEmpty(name)) return null;
       if (s_cache.TryGetValue(name, out var cached)) return cached;
-      string? path = null;
-      try { path = proc.MainModule?.FileName; } catch { }
+      string? path = GetProcessImagePath(proc);
       if (string.IsNullOrEmpty(path))
         path = FriendlyNameHelper.GetKnownExePath(name);
       if (string.IsNullOrEmpty(path)) { s_cache.Set(name, null); return null; }

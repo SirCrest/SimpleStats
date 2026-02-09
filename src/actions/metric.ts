@@ -216,6 +216,7 @@ type MetricDisplay = {
   graphMin: number | null;
   processName?: string | null;
   processIcon?: string | null;
+  labelArrow?: string | null;
   idle?: boolean;
 };
 
@@ -260,7 +261,7 @@ const METRICS_BY_GROUP: Record<MetricGroup, MetricId[]> = {
   gpu: ["gpu-load", "gpu-vram", "gpu-vram-used", "gpu-temp", "gpu-power", "gpu-top-compute"],
   memory: ["mem-total", "mem-used", "top-mem", "top-mem-pct"],
   disk: ["disk-activity", "disk-used", "disk-free", "disk-read", "disk-write"],
-  network: ["net-up", "net-down", "net-total"],
+  network: ["net-down", "net-up", "net-total"],
   system: ["clock"]
 };
 
@@ -269,7 +270,7 @@ const DEFAULT_METRIC: Record<MetricGroup, MetricId> = {
   gpu: "gpu-load",
   memory: "mem-total",
   disk: "disk-activity",
-  network: "net-up",
+  network: "net-down",
   system: "clock"
 };
 
@@ -294,7 +295,7 @@ const LEGACY_DEFAULTS: Record<string, Partial<Settings>> = {
   "com.crest.simplestats.gputemp": { group: "gpu", metric: "gpu-temp" },
   "com.crest.simplestats.memory": { group: "memory", metric: "mem-total" },
   "com.crest.simplestats.disk": { group: "disk", metric: "disk-use" },
-  "com.crest.simplestats.network": { group: "network", metric: "net-up" }
+  "com.crest.simplestats.network": { group: "network", metric: "net-down" }
 };
 
 function getLegacyDefaults(manifestId?: string): Partial<Settings> | undefined {
@@ -322,8 +323,9 @@ function hasAnyMetricSettings(settings?: Settings): boolean {
 const KEY_SIZE = 72;
 const LABEL_Y = 9;
 const VALUE_Y = 25;
-const GRAPH_LEFT = 5;
-const GRAPH_RIGHT = KEY_SIZE - 5;
+const USE_GRADIENT_FILL = true; // set to false for flat 0.18 opacity fill
+const GRAPH_LEFT = 2;
+const GRAPH_RIGHT = KEY_SIZE - 2;
 const GRAPH_TOP = 30;
 const GRAPH_BOTTOM = KEY_SIZE - 5;
 const TEXT_LEFT = 5;
@@ -608,6 +610,16 @@ function valueFontSize(text: string): number {
   return 11;
 }
 
+const UNIT_SIZE_RATIO = 0.77; // unit suffix rendered at 77% of value font size
+function renderValueWithUnit(value: string, fontSize: number, color: string): string {
+  if (value === "--" || value === "IDLE") return value;
+  const match = value.match(/^([\d.]+)(.+)$/);
+  if (!match) return value;
+  const [, num, unit] = match;
+  const unitSize = Math.round(fontSize * UNIT_SIZE_RATIO);
+  return `${num}<tspan font-size="${unitSize}" fill="${color}">${unit}</tspan>`;
+}
+
 function textLengthAttrs(text: string): string {
   if (text.length <= 6) return "";
   return ` textLength="${TEXT_WIDTH}" lengthAdjust="spacingAndGlyphs"`;
@@ -689,9 +701,9 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
     <svg xmlns="http://www.w3.org/2000/svg" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
       <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
       <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="9" font-weight="700" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
+        font-size="9" font-weight="600" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
       <text x="${TEXT_LEFT}" y="${VALUE_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="${valueSize}" font-weight="700" fill="${baseStyle.value}" opacity="0.25"${textLengthAttrs(display.value)}>${value}</text>
+        font-size="${valueSize}" font-weight="700" fill="${baseStyle.value}" opacity="0.25"${textLengthAttrs(display.value)}>${renderValueWithUnit(value, valueSize, baseStyle.value)}</text>
     </svg>
     `.trim();
   }
@@ -700,16 +712,16 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
   if (display.processName != null) {
     const procName = display.processName || "";
     const iconMarkup = display.processIcon
-      ? `<image x="52" y="13" width="16" height="16" href="data:image/png;base64,${display.processIcon}" />`
+      ? `<image x="53" y="14" width="12" height="12" href="data:image/png;base64,${display.processIcon}" />`
       : "";
     const nameMarkup = renderProcessName(procName, labelColor);
     return `
     <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
       <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
       <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="9" font-weight="700" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
+        font-size="9" font-weight="600" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
       <text x="${TEXT_LEFT}" y="${VALUE_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${value}</text>
+        font-size="13" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${renderValueWithUnit(value, 13, valueColor)}</text>
       ${iconMarkup}
       ${nameMarkup}
     </svg>
@@ -722,9 +734,9 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
     <svg xmlns="http://www.w3.org/2000/svg" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
       <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
       <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="9" font-weight="700" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
+        font-size="9" font-weight="600" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
       <text x="${TEXT_LEFT}" y="${VALUE_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${value}</text>
+        font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${renderValueWithUnit(value, valueSize, valueColor)}</text>
     </svg>
     `.trim();
   }
@@ -735,18 +747,51 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
   const values = history.getValues();
   const graph = computeGraphPaths(values, display.graphMax, display.graphMinMax, display.graphMin);
 
-  const graphMarkup = graph.hasData
-    ? `<path d="${graph.area}" fill="${fillColor}" fill-opacity="0.18" />
+  const fadeL = GRAPH_LEFT;
+  const fadeR = GRAPH_RIGHT;
+  const fadePx = 8;
+  const fadeFrac = fadePx / (fadeR - fadeL) * 100;
+  const fadeMid = fadeFrac * 0.4; // ease-out: reach 80% opacity at 40% of fade distance
+  const fadeEnd = 100 - fadeFrac;
+  const fadeMidR = 100 - fadeMid;
+  const defParts = [
+    `<linearGradient id="ef" gradientUnits="userSpaceOnUse" x1="${fadeL}" y1="0" x2="${fadeR}" y2="0">
+      <stop offset="0%" stop-color="white" stop-opacity="0" />
+      <stop offset="${fadeMid.toFixed(1)}%" stop-color="white" stop-opacity="0.8" />
+      <stop offset="${fadeFrac.toFixed(1)}%" stop-color="white" stop-opacity="1" />
+      <stop offset="${fadeEnd.toFixed(1)}%" stop-color="white" stop-opacity="1" />
+      <stop offset="${fadeMidR.toFixed(1)}%" stop-color="white" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="white" stop-opacity="0" />
+    </linearGradient>
+    <mask id="em"><rect x="${fadeL}" y="0" width="${fadeR - fadeL}" height="${KEY_SIZE}" fill="url(#ef)" /></mask>`
+  ];
+  if (USE_GRADIENT_FILL) {
+    defParts.push(`<linearGradient id="gf" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="${fillColor}" stop-opacity="0.25" />
+      <stop offset="100%" stop-color="${fillColor}" stop-opacity="0.05" />
+    </linearGradient>`);
+  }
+  const defBlock = `<defs>${defParts.join("")}</defs>`;
+  const areaFill = USE_GRADIENT_FILL ? `fill="url(#gf)"` : `fill="${fillColor}" fill-opacity="0.18"`;
+  const graphInner = graph.hasData
+    ? `<path d="${graph.area}" ${areaFill} />
        <path d="${graph.line}" fill="none" stroke="${lineColor}" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" opacity="0.95" />`
     : `<path d="${graph.line}" fill="none" stroke="${lineColor}" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="3 3" opacity="0.45" />`;
+  const graphMarkup = `${defBlock}<g mask="url(#em)">${graphInner}</g>`;
 
   return `
     <svg xmlns="http://www.w3.org/2000/svg" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
       <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
       <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="9" font-weight="700" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
+        font-size="9" font-weight="600" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>${display.labelArrow === "up" ? `
+      <path d="M29 2 L32.5 6 L30.5 6 L30.5 9 L27.5 9 L27.5 6 L25.5 6 Z" fill="${labelColor}" />
+      <text x="35" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" font-weight="600" fill="${labelColor}">UP</text>` : ""}${display.labelArrow === "down" ? `
+      <path d="M29 9 L32.5 5 L30.5 5 L30.5 2 L27.5 2 L27.5 5 L25.5 5 Z" fill="${labelColor}" />
+      <text x="35" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" font-weight="600" fill="${labelColor}">DOWN</text>` : ""}
       <text x="${TEXT_LEFT}" y="${VALUE_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
-        font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${value}</text>
+        font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${renderValueWithUnit(value, valueSize, valueColor)}</text>
       ${graphMarkup}
     </svg>
   `.trim();
@@ -866,7 +911,7 @@ function formatPercent(value: number | null): string {
 
 function formatTempC(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "--";
-  return `${Math.round(value)}C`;
+  return `${Math.round(value)}°C`;
 }
 
 function formatPower(value: number | null): string {
@@ -894,7 +939,7 @@ function formatTopCpu(name: string | null, pct: number | null): string {
 
 function formatTopMem(name: string | null, mb: number | null): string {
   if (!name || mb === null || !Number.isFinite(mb)) return "--";
-  if (mb >= 1024) return `${name} ${(mb / 1024).toFixed(1)}GB`;
+  if (mb >= 1024) return `${name} ${formatGigabytes(mb / 1024)}`;
   return `${name} ${Math.round(mb)}MB`;
 }
 
@@ -931,8 +976,8 @@ function toGibFromMaybeMb(value: number | null): number | null {
 
 function formatGigabytes(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "--";
-  if (value < 10) return `${value.toFixed(1)}GB`;
-  return `${Math.round(value)}GB`;
+  if (value >= 100) return `${Math.round(value)}GB`;
+  return `${value.toFixed(1)}GB`;
 }
 
 function normalizeDiskId(value: string | null | undefined): string {
@@ -1217,7 +1262,8 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       const net = selectNet(snapshot, settings.netIface);
       const upMbit = bytesToMbit(net?.txBps ?? null);
       return {
-        label: "NET UP",
+        label: "NET",
+        labelArrow: "up",
         value: formatRateMbit(upMbit),
         graphValue: upMbit,
         graphMax: null,
@@ -1229,7 +1275,8 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       const net = selectNet(snapshot, settings.netIface);
       const downMbit = bytesToMbit(net?.rxBps ?? null);
       return {
-        label: "NET DOWN",
+        label: "NET",
+        labelArrow: "down",
         value: formatRateMbit(downMbit),
         graphValue: downMbit,
         graphMax: null,
@@ -1274,7 +1321,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         }
       }
       const memVal = tp.memMB !== null && Number.isFinite(tp.memMB)
-        ? (tp.memMB >= 1024 ? `${(tp.memMB / 1024).toFixed(1)}GB` : `${Math.round(tp.memMB)}MB`)
+        ? (tp.memMB >= 1024 ? formatGigabytes(tp.memMB / 1024) : `${Math.round(tp.memMB)}MB`)
         : "--";
       return {
         label: "TOP MEM",

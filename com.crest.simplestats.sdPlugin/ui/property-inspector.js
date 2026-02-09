@@ -183,8 +183,8 @@ const METRICS_BY_GROUP = {
     { value: "disk-write", label: "Write Throughput" }
   ],
   network: [
-    { value: "net-up", label: "Upload Rate" },
     { value: "net-down", label: "Download Rate" },
+    { value: "net-up", label: "Upload Rate" },
     { value: "net-total", label: "Total Transfer" }
   ],
   system: [{ value: "clock", label: "Clock (HH:MM:SS)" }]
@@ -195,7 +195,7 @@ const DEFAULT_METRIC = {
   gpu: "gpu-load",
   memory: "mem-total",
   disk: "disk-activity",
-  network: "net-up",
+  network: "net-down",
   system: "clock"
 };
 
