@@ -158,12 +158,22 @@ const generateSvg = () => {
 </svg>`;
 };
 
+// Device colors matching GROUP_STYLE in metric action
+const DEVICE_COLORS = {
+  cpu: "#27D4FF",
+  gpu: "#A06CFF",
+  memory: "#2A6DFF",
+  disk: "#4CFF8A",
+  network: "#FF6FB1",
+  system: "#FFD166"
+};
+
 /**
- * Generate a single-line action icon
- * Minimal design with one bright cyan line and dimmed fill
+ * Generate a single-line action icon with a specific color
+ * Minimal design with one bright line and dimmed fill
  * Used in the Stream Deck actions list
  */
-const generateActionSvg = () => {
+const generateActionSvg = (color = "#27D4FF") => {
   const size = 56;
   const padding = 3;
   const innerSize = size - padding * 2;
@@ -253,7 +263,7 @@ const generateActionSvg = () => {
   <!-- Dimmed fill -->
   <path
     d="${fillPath}"
-    fill="#27D4FF"
+    fill="${color}"
     opacity="0.15"
   />
 
@@ -261,7 +271,7 @@ const generateActionSvg = () => {
   <path
     d="${linePath}"
     fill="none"
-    stroke="#27D4FF"
+    stroke="${color}"
     stroke-width="1.5"
     stroke-linecap="round"
     stroke-linejoin="round"
@@ -437,26 +447,28 @@ async function main() {
 
     console.log(`✓ Created PNG: ${categoryPngPath}`);
 
-    // Generate action icon
-    const actionSvg = generateActionSvg();
-    const actionPngPath = path.join(actionsImgsDir, "metric.png");
-    const actionSvgPath = path.join(actionsImgsDir, "metric.svg");
+    // Generate per-device action icons
+    for (const [device, color] of Object.entries(DEVICE_COLORS)) {
+      const actionSvg = generateActionSvg(color);
+      const actionPngPath = path.join(actionsImgsDir, `${device}.png`);
+      const actionSvgPath = path.join(actionsImgsDir, `${device}.svg`);
 
-    fs.writeFileSync(actionSvgPath, actionSvg);
-    console.log(`✓ Created SVG: ${actionSvgPath}`);
+      fs.writeFileSync(actionSvgPath, actionSvg);
+      console.log(`✓ Created SVG: ${actionSvgPath}`);
 
-    const actionPngCreated = await svgToPng(actionSvg, actionPngPath);
+      const actionPngCreated = await svgToPng(actionSvg, actionPngPath);
 
-    if (!actionPngCreated) {
-      console.log("\n⚠ Action icon PNG conversion failed. SVG is available as fallback.");
-      process.exit(1);
+      if (!actionPngCreated) {
+        console.log(`\n⚠ Action icon PNG conversion failed for ${device}. SVG is available as fallback.`);
+        process.exit(1);
+      }
+
+      console.log(`✓ Created PNG: ${actionPngPath}`);
     }
-
-    console.log(`✓ Created PNG: ${actionPngPath}`);
 
     console.log("\n✓ All icons generated successfully!");
     console.log("  Category: " + categoryPngPath);
-    console.log("  Action:   " + actionPngPath);
+    console.log("  Actions:  " + Object.keys(DEVICE_COLORS).join(", "));
 
     // Generate large test version for visual inspection
     const testSvg = generateLargeTestIcon();

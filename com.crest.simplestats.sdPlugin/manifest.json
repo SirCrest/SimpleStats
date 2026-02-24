@@ -3,7 +3,7 @@
   "Name": "SimpleStats",
   "Author": "Crest",
   "Description": "Task Manager-style system stats for Stream Deck keys.",
-  "Version": "0.9.4.0",
+  "Version": "0.10.1.1",
   "UUID": "com.crest.simplestats",
   "SDKVersion": 2,
   "Software": {
@@ -24,39 +24,11 @@
   "CodePath": "bin/plugin.js",
   "Actions": [
     {
-      "UUID": "com.crest.simplestats.metric",
-      "Name": "Metric Display",
-      "Icon": "imgs/actions/metric",
-      "PropertyInspectorPath": "ui/property-inspector.html",
-      "UserTitleEnabled": false,
-      "States": [
-        {
-          "Image": "imgs/actions/metric",
-          "Title": "STAT"
-        }
-      ]
-    },
-    {
-      "UUID": "com.crest.simplestats.stat",
-      "Name": "Legacy Stat",
-      "Icon": "imgs/actions/metric",
-      "PropertyInspectorPath": "ui/property-inspector.html",
-      "UserTitleEnabled": false,
-      "VisibleInActionsList": false,
-      "States": [
-        {
-          "Image": "imgs/actions/metric",
-          "Title": "STAT"
-        }
-      ]
-    },
-    {
       "UUID": "com.crest.simplestats.cpu",
-      "Name": "Legacy CPU",
+      "Name": "CPU",
       "Icon": "imgs/actions/cpu",
-      "PropertyInspectorPath": "ui/property-inspector.html",
+      "PropertyInspectorPath": "ui/pi-cpu.html",
       "UserTitleEnabled": false,
-      "VisibleInActionsList": false,
       "States": [
         {
           "Image": "imgs/actions/cpu",
@@ -66,11 +38,10 @@
     },
     {
       "UUID": "com.crest.simplestats.gpu",
-      "Name": "Legacy GPU",
+      "Name": "GPU",
       "Icon": "imgs/actions/gpu",
-      "PropertyInspectorPath": "ui/property-inspector.html",
+      "PropertyInspectorPath": "ui/pi-gpu.html",
       "UserTitleEnabled": false,
-      "VisibleInActionsList": false,
       "States": [
         {
           "Image": "imgs/actions/gpu",
@@ -79,26 +50,11 @@
       ]
     },
     {
-      "UUID": "com.crest.simplestats.gputemp",
-      "Name": "Legacy GPU Temp",
-      "Icon": "imgs/actions/gputemp",
-      "PropertyInspectorPath": "ui/property-inspector.html",
-      "UserTitleEnabled": false,
-      "VisibleInActionsList": false,
-      "States": [
-        {
-          "Image": "imgs/actions/gputemp",
-          "Title": "GTMP"
-        }
-      ]
-    },
-    {
       "UUID": "com.crest.simplestats.memory",
-      "Name": "Legacy Memory",
+      "Name": "Memory",
       "Icon": "imgs/actions/memory",
-      "PropertyInspectorPath": "ui/property-inspector.html",
+      "PropertyInspectorPath": "ui/pi-memory.html",
       "UserTitleEnabled": false,
-      "VisibleInActionsList": false,
       "States": [
         {
           "Image": "imgs/actions/memory",
@@ -108,11 +64,10 @@
     },
     {
       "UUID": "com.crest.simplestats.disk",
-      "Name": "Legacy Disk",
+      "Name": "Disk",
       "Icon": "imgs/actions/disk",
-      "PropertyInspectorPath": "ui/property-inspector.html",
+      "PropertyInspectorPath": "ui/pi-disk.html",
       "UserTitleEnabled": false,
-      "VisibleInActionsList": false,
       "States": [
         {
           "Image": "imgs/actions/disk",
@@ -122,15 +77,27 @@
     },
     {
       "UUID": "com.crest.simplestats.network",
-      "Name": "Legacy Network",
+      "Name": "Network",
       "Icon": "imgs/actions/network",
-      "PropertyInspectorPath": "ui/property-inspector.html",
+      "PropertyInspectorPath": "ui/pi-network.html",
       "UserTitleEnabled": false,
-      "VisibleInActionsList": false,
       "States": [
         {
           "Image": "imgs/actions/network",
           "Title": "NET"
+        }
+      ]
+    },
+    {
+      "UUID": "com.crest.simplestats.system",
+      "Name": "System",
+      "Icon": "imgs/actions/system",
+      "PropertyInspectorPath": "ui/pi-system.html",
+      "UserTitleEnabled": false,
+      "States": [
+        {
+          "Image": "imgs/actions/system",
+          "Title": "SYS"
         }
       ]
     }

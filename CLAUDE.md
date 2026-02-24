@@ -13,12 +13,11 @@ Stream Deck plugin for real-time Windows system performance monitoring with Task
 
 ## Feature Summary
 
-Single configurable action that displays system metrics with inline graphs and a property inspector for selection.
+Six per-device actions (CPU, GPU, Memory, Disk, Network, System) that display system metrics with inline graphs and per-device property inspectors.
 
 ### Current Features
 
-- One action: "Metric Display" with per-key settings
-- Device selection: CPU, GPU, Memory, Disk, Network, System
+- Six actions: CPU, GPU, Memory, Disk, Network, System (one per device category)
 - Metric selection per device (see list below)
 - Graph-based SVG rendering: 60s history, smoothed 1px line, dim fill, per-device colors
 - Text optimized for keys (left-aligned labels/values, reduced sizes for more graph space)
@@ -68,10 +67,12 @@ Network
 System
 - Clock (HH:MM:SS)
 
-## Property Inspector
+## Property Inspectors
 
+- Six per-device property inspectors (no device dropdown needed)
+- Shared common JS module (`pi-common.js`) and CSS (`pi-common.css`)
 - Built with sdpi-components
-- Device + metric dropdowns
+- Metric dropdown per device
 - Polling interval selector (1-5 seconds)
 - Conditional fields for device selection (CPU core, GPU, Disk, Interface)
 - CPU per-core stepper controls
@@ -93,8 +94,14 @@ System
 SimpleStats/
   src/
     actions/
-      metric.ts            # Single configurable action + sparklines
-    index.ts               # Plugin entry point, registers the action
+      base-metric.ts       # Shared base class with rendering engine (~1800 lines)
+      cpu.ts               # CPU action subclass
+      gpu.ts               # GPU action subclass
+      memory.ts            # Memory action subclass
+      disk.ts              # Disk action subclass
+      network.ts           # Network action subclass
+      system.ts            # System action subclass
+    index.ts               # Plugin entry point, registers 6 actions
     stats.ts               # Polling service + history (CPU, GPU, disk, network)
   com.crest.simplestats.sdPlugin/
     bin/
@@ -103,14 +110,24 @@ SimpleStats/
       SimpleStatsHelper.exe # .NET helper for Windows metrics + GPU + icons
     imgs/
       actions/
-        metric.png         # Action icon
+        cpu.png            # Per-device color-themed action icons
+        gpu.png
+        memory.png
+        disk.png
+        network.png
+        system.png
       plugin/
         icon.png
         category.png
     ui/
-      property-inspector.html
-      property-inspector.js
-      property-inspector.css
+      pi-common.js         # Shared PI logic (settings, wiring, device cache)
+      pi-common.css        # Shared PI styles
+      pi-cpu.html + .js    # CPU property inspector
+      pi-gpu.html + .js    # GPU property inspector
+      pi-memory.html + .js # Memory property inspector
+      pi-disk.html + .js   # Disk property inspector
+      pi-network.html + .js # Network property inspector
+      pi-system.html + .js # System property inspector
       sdpi-components.js
     manifest.json
   native/
@@ -124,9 +141,11 @@ SimpleStats/
 
 ## Architecture Notes
 
+- Six per-device actions (CPU, GPU, Memory, Disk, Network, System) inherit from BaseMetricAction.
+- Each subclass overrides `getDeviceGroup()` to fix the device group, eliminating the device dropdown.
 - StatsPoller is a singleton with lazy start/stop based on visible actions.
 - Each visible key subscribes to the poller and renders label + value + graph (top-process keys use icon + name layout instead of graph).
-- Property inspector uses Stream Deck settings to persist per-key configuration.
+- Property inspectors are per-device HTML+JS files sharing a common module (`pi-common.js`).
 - Device lists (CPU cores, GPUs, disks, network interfaces) are populated on demand.
 - Polling is metric-aware and per-group: CPU/memory update together, GPU/disk/network on their own cadences.
 - Polling is async and cached so slow sources don’t block fast renders.
@@ -211,7 +230,20 @@ The full proposal should also include:
 
 - Network totals during long Stream Deck downtime: investigate OS-level usage history or an optional background helper/service.
 
-## Recent Changes (2026-02-06)
+## Recent Changes (2026-02-22)
+
+- Refactored single "Metric Display" action into 6 per-device actions (CPU, GPU, Memory, Disk, Network, System)
+- Removed device dropdown — each action is fixed to its device group
+- Extracted BaseMetricAction base class with rendering engine; 6 thin subclasses override getDeviceGroup()
+- Created 6 per-device property inspectors (HTML + JS) sharing pi-common.js module
+- Generated color-themed action icons per device using GROUP_STYLE colors
+- Removed all legacy action classes and backward-compatibility code
+
+## Changes (2026-02-21)
+
+- Fixed network total transfer (1H/24H) showing less than 60s after PC reboot. Replaced single end-start delta with sum-of-positive-consecutive-deltas to skip counter resets at reboot boundaries.
+
+## Changes (2026-02-06)
 
 - Removed gpu-top-vram metric (not feasible on Windows NVML)
 - Added top-mem-pct metric (% of total RAM used by top process)

@@ -1,5 +1,29 @@
 # Release Notes
 
+## v0.10.1.1
+
+Per-device actions refactor, network transfer fixes, and label improvements.
+
+### Per-device actions
+- **Six visible actions**: CPU, GPU, Memory, Disk, Network, System replace the single "Metric Display" action.
+- **Per-device property inspectors**: each action opens a tailored PI with only the fields relevant to that device (no device dropdown).
+- **Color-themed action icons**: each device has its own icon colored to match its graph style (cyan CPU, purple GPU, blue Memory, green Disk, pink Network, gold System).
+- **Shared base class**: rendering engine (~1800 lines) lives in `BaseMetricAction`; each device action is a thin subclass overriding `getDeviceGroup()`.
+- **Shared PI module**: `pi-common.js` provides settings management, device cache, and wiring utilities shared by all 6 property inspectors.
+- **Removed all legacy actions and backward-compatibility code** (no migration needed for beta users).
+
+### Network transfer fixes
+- Fixed network total transfer (1H/24H) showing less than the 60S value after reboots or plugin restarts. Replaced dual cumulative-counter history with a cascading bucket design where longer periods literally include shorter ones, making 1H < 60S mathematically impossible.
+- "Total" transfer now sums per-interface deltas instead of tracking a single cumulative counter, so a counter reset on one interface no longer causes a negative spike on the total.
+- Network history persistence upgraded to version 2 format (old v1 files are discarded on first run — brief loss of historical totals for beta users).
+
+### Label improvements
+- Renamed network transfer period label from `NET 1M` to `NET 60S` to avoid ambiguity with "1 million" or "1 megabyte".
+
+## v0.9.4.1
+
+- Fixed network total transfer (1H/24H) showing dramatically less than 60s value after a PC reboot. Counter resets at reboot boundaries are now skipped instead of causing a fallback to only 60 seconds of data.
+
 ## v0.9.4.0
 
 - Improved icon extraction fallback using QueryFullProcessImageName for processes where MainModule access is restricted.

@@ -1,7 +1,6 @@
 ﻿import fs from "node:fs";
 import path from "node:path";
 import streamDeck, {
-  action,
   SingletonAction,
   Target,
   type DidReceiveSettingsEvent,
@@ -135,8 +134,8 @@ function writeDebugLog(message: string, data?: unknown): void {
 
 writeDebugLog("loggerInit", { paths: debugLogPaths });
 
-type MetricGroup = "cpu" | "gpu" | "memory" | "disk" | "network" | "system";
-type MetricId =
+export type MetricGroup = "cpu" | "gpu" | "memory" | "disk" | "network" | "system";
+export type MetricId =
   | "cpu-total"
   | "cpu-core"
   | "cpu-peak"
@@ -162,7 +161,7 @@ type MetricId =
   | "top-mem-pct"
   | "clock";
 
-type Settings = {
+export type Settings = {
   group?: MetricGroup;
   metric?: MetricId;
   cpuPerCore?: boolean;
@@ -174,7 +173,6 @@ type Settings = {
   pollIntervalSec?: number | string;
   warnThreshold?: number | string;
   topThreshold?: number | string;
-  critThreshold?: number | string; // legacy — no longer used, kept for hasAnyMetricSettings
 };
 
 type NormalizedSettings = {
@@ -287,38 +285,6 @@ const DEFAULT_SETTINGS: NormalizedSettings = {
   warnThreshold: 0,
   topThreshold: 0
 };
-
-const LEGACY_DEFAULTS: Record<string, Partial<Settings>> = {
-  "com.crest.simplestats.stat": { group: "cpu", metric: "cpu-total" },
-  "com.crest.simplestats.cpu": { group: "cpu", metric: "cpu-total" },
-  "com.crest.simplestats.gpu": { group: "gpu", metric: "gpu-load" },
-  "com.crest.simplestats.gputemp": { group: "gpu", metric: "gpu-temp" },
-  "com.crest.simplestats.memory": { group: "memory", metric: "mem-total" },
-  "com.crest.simplestats.disk": { group: "disk", metric: "disk-use" },
-  "com.crest.simplestats.network": { group: "network", metric: "net-down" }
-};
-
-function getLegacyDefaults(manifestId?: string): Partial<Settings> | undefined {
-  return manifestId ? LEGACY_DEFAULTS[manifestId] : undefined;
-}
-
-function hasAnyMetricSettings(settings?: Settings): boolean {
-  return Boolean(
-    settings &&
-      (settings.group !== undefined ||
-        settings.metric !== undefined ||
-        settings.cpuPerCore !== undefined ||
-        settings.cpuCore !== undefined ||
-        settings.gpuIndex !== undefined ||
-        settings.diskId !== undefined ||
-        settings.netIface !== undefined ||
-        settings.netPeriodSec !== undefined ||
-        settings.pollIntervalSec !== undefined ||
-        settings.warnThreshold !== undefined ||
-        settings.topThreshold !== undefined ||
-        settings.critThreshold !== undefined)
-  );
-}
 
 const KEY_SIZE = 72;
 const LABEL_Y = 9;
@@ -1047,7 +1013,7 @@ function diskShortLabel(disk: DiskSnapshot | null): string {
 function periodLabel(periodSec: number): string {
   if (periodSec >= 86400) return "24H";
   if (periodSec >= 3600) return "1H";
-  return "1M";
+  return "60S";
 }
 
 function bytesToMbit(value: number | null): number | null {
@@ -1440,19 +1406,18 @@ function buildDataSourceItems(event: string, snapshot: StatsSnapshot): DataSourc
   }
 }
 
-@action({ UUID: "com.crest.simplestats.metric" })
-export class MetricAction extends SingletonAction<Settings> {
+export class BaseMetricAction extends SingletonAction<Settings> {
   private readonly states = new WeakMap<object, ActionState>();
   private readonly statesById = new Map<string, ActionState>();
+
+  protected getDeviceGroup(): MetricGroup | null {
+    return null;
+  }
 
   override onWillAppear(ev: WillAppearEvent<Settings>): void {
     if (!ev.action.isKey()) return;
     const action = ev.action;
-    const legacyDefaults = getLegacyDefaults(action.manifestId);
-    if (legacyDefaults && !hasAnyMetricSettings(ev.payload.settings)) {
-      void action.setSettings({ ...legacyDefaults });
-    }
-    const preGroup = normalizeSettings(ev.payload.settings).group;
+    const preGroup = normalizeSettings(this.mergeDeviceGroup(ev.payload.settings)).group;
     statsPoller.setInterest(action.id, preGroup);
     const { state } = this.getState(action, ev.payload.settings);
     this.bumpDebug(state);
@@ -1586,13 +1551,17 @@ export class MetricAction extends SingletonAction<Settings> {
     this.sendDataSources(statsPoller.getSnapshot(), payload.event);
   }
 
+  private mergeDeviceGroup(settings: Settings | undefined): Settings | undefined {
+    const fixedGroup = this.getDeviceGroup();
+    if (!fixedGroup) return settings;
+    return { ...settings, group: fixedGroup };
+  }
+
   private getState(
     actionInstance: KeyAction<Settings>,
     settings: Settings | undefined
   ): { state: ActionState; changed: boolean } {
-    const legacyDefaults = getLegacyDefaults(actionInstance.manifestId);
-    const mergedSettings = legacyDefaults ? { ...legacyDefaults, ...settings } : settings;
-    const canRestoreHistory = hasAnyMetricSettings(mergedSettings);
+    const mergedSettings = this.mergeDeviceGroup(settings);
     const normalized = normalizeSettings(mergedSettings);
     const nextKey = settingsKey(normalized);
     const existing = this.states.get(actionInstance);
@@ -1600,9 +1569,9 @@ export class MetricAction extends SingletonAction<Settings> {
       pruneHistoryCache();
       const cacheKeyBase = historyCacheBaseKey(actionInstance);
       const cacheKey = historyCacheKey(cacheKeyBase, nextKey);
-      let background = canRestoreHistory ? backgroundStates.get(cacheKey) : null;
+      let background = backgroundStates.get(cacheKey) ?? null;
       let backgroundKey = cacheKey;
-      if (!background && canRestoreHistory) {
+      if (!background) {
         for (const [key, bg] of backgroundStates) {
           if (bg.settingsKey === nextKey) {
             background = bg;
@@ -1614,14 +1583,14 @@ export class MetricAction extends SingletonAction<Settings> {
       if (background) {
         stopBackgroundState(backgroundKey, background);
       }
-      const cached = canRestoreHistory ? historyCache.get(cacheKey) : null;
+      const cached = historyCache.get(cacheKey) ?? null;
       const reuseValues = cached && cached.settingsKey === nextKey ? cached.values : null;
       const state: ActionState = {
         settings: normalized,
         settingsKey: nextKey,
         cacheKeyBase,
         cacheKey,
-        settingsReady: canRestoreHistory,
+        settingsReady: true,
         history: new HistorySeries(historyPointsForInterval(normalized.pollIntervalSec)),
         diskSpaceWarmupComplete: false
       };
@@ -1647,14 +1616,14 @@ export class MetricAction extends SingletonAction<Settings> {
       existing.settings = normalized;
       existing.settingsKey = nextKey;
       const nextCacheKey = historyCacheKey(existing.cacheKeyBase, nextKey);
-      const background = canRestoreHistory ? backgroundStates.get(nextCacheKey) : null;
+      const background = backgroundStates.get(nextCacheKey) ?? null;
       if (background) {
         stopBackgroundState(nextCacheKey, background);
         existing.history = background.history;
         existing.history.setMaxPoints(historyPointsForInterval(normalized.pollIntervalSec));
         writeDebugLog("historyBackgroundRestore", { actionId: actionInstance.id, cacheKey: nextCacheKey });
       } else {
-        const cached = canRestoreHistory ? historyCache.get(nextCacheKey) : null;
+        const cached = historyCache.get(nextCacheKey) ?? null;
         if (cached && cached.settingsKey === nextKey) {
           existing.history = new HistorySeries(historyPointsForInterval(normalized.pollIntervalSec));
           existing.history.setValues(cached.values);
@@ -1673,9 +1642,7 @@ export class MetricAction extends SingletonAction<Settings> {
         to: normalized
       });
     }
-    if (canRestoreHistory) {
-      existing.settingsReady = true;
-    }
+    existing.settingsReady = true;
     if (!isDiskSpaceMetric(existing.settings)) {
       existing.diskSpaceWarmupComplete = false;
     }
@@ -1824,7 +1791,11 @@ export class MetricAction extends SingletonAction<Settings> {
       return;
     }
 
-    const events = ["getGpus", "getDisks", "getNetIfaces"];
+    const group = this.getDeviceGroup();
+    const events: string[] = [];
+    if (!group || group === "gpu") events.push("getGpus");
+    if (!group || group === "disk") events.push("getDisks");
+    if (!group || group === "network") events.push("getNetIfaces");
     for (const name of events) {
       const items = buildDataSourceItems(name, snapshot);
       if (items) {
@@ -1855,24 +1826,3 @@ export class MetricAction extends SingletonAction<Settings> {
     }
   }
 }
-
-@action({ UUID: "com.crest.simplestats.stat" })
-export class LegacyStatAction extends MetricAction {}
-
-@action({ UUID: "com.crest.simplestats.cpu" })
-export class LegacyCpuAction extends MetricAction {}
-
-@action({ UUID: "com.crest.simplestats.gpu" })
-export class LegacyGpuAction extends MetricAction {}
-
-@action({ UUID: "com.crest.simplestats.gputemp" })
-export class LegacyGpuTempAction extends MetricAction {}
-
-@action({ UUID: "com.crest.simplestats.memory" })
-export class LegacyMemoryAction extends MetricAction {}
-
-@action({ UUID: "com.crest.simplestats.disk" })
-export class LegacyDiskAction extends MetricAction {}
-
-@action({ UUID: "com.crest.simplestats.network" })
-export class LegacyNetworkAction extends MetricAction {}

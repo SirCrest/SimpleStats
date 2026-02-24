@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="sdpi-components.js"></script>
+    <link rel="stylesheet" href="pi-common.css" />
+    <title>GPU</title>
+  </head>
+  <body>
+    <sdpi-item id="metric-row" label="Metric">
+      <sdpi-select id="metric" setting="metric"></sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="gpu-row" label="GPU">
+      <select id="gpu" class="sdpi-item-value"></select>
+    </sdpi-item>
+
+    <sdpi-item id="poll-row" label="Polling">
+      <sdpi-select id="poll-interval" setting="pollIntervalSec">
+        <option value="1">1 sec</option>
+        <option value="2">2 sec</option>
+        <option value="3">3 sec</option>
+        <option value="4">4 sec</option>
+        <option value="5">5 sec</option>
+      </sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="warn-threshold-row" label="Alert %">
+      <sdpi-textfield id="warn-threshold" type="number" placeholder="0 (off)"></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item id="threshold-note">
+      <div class="help-text">Value text and graph line turn red when above threshold.</div>
+    </sdpi-item>
+
+    <sdpi-item id="top-threshold-row" label="Idle below">
+      <sdpi-textfield id="top-threshold" type="number" placeholder="5"></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item id="top-threshold-note">
+      <div class="help-text">Shows IDLE when top process is below this %. 0 to disable.</div>
+    </sdpi-item>
+
+    <script src="pi-common.js"></script>
+    <script src="pi-gpu.js"></script>
+  </body>
+</html>

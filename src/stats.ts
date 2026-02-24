@@ -105,10 +105,9 @@ const FS_SIZE_CACHE_MS = 60 * 1000; // 60 seconds - disk space updates slowly
 const NET_IFACE_CACHE_MS = 60 * 60 * 1000; // 1 hour - NICs rarely change
 const GPU_CACHE_MS = 1000;
 const NET_STATS_CACHE_MS = 1000;
-const NET_HISTORY_SECOND_MS = 1000;
-const NET_HISTORY_MINUTE_MS = 60 * 1000;
 const MAX_NET_HISTORY_SECONDS_MS = 60 * 1000;
-const MAX_NET_HISTORY_MINUTES_MS = 24 * 60 * 60 * 1000;
+const MAX_COMPLETED_MINUTES = 59;
+const MAX_COMPLETED_HOURS = 23;
 
 const NET_HISTORY_PERSIST_MS = 60 * 1000;
 const NET_HISTORY_PATHS = (() => {
@@ -233,41 +232,34 @@ function writePerfLog(message: string, data?: unknown): void {
   }
 }
 
-type NetHistoryPersisted = {
+type TransferCascade = {
+  secondDeltas: Array<{ t: number; rx: number; tx: number }>;
+  currentMinute: { epoch: number; rx: number; tx: number };
+  completedMinutes: Array<{ epoch: number; rx: number; tx: number }>;
+  completedHours: Array<{ epoch: number; rx: number; tx: number }>;
+  prevCounter: { rx: number; tx: number } | null;
+};
+
+type CascadePersisted = {
   version: number;
   savedAt: number;
-  historyMinutes: Record<string, Array<[number, number, number]>>;
+  cascades: Record<string, {
+    hours: Array<[number, number, number]>;
+    minutes: Array<[number, number, number]>;
+    currentMinute: [number, number, number];
+  }>;
 };
 
-type NetHistoryLoad = {
-  payload: NetHistoryPersisted;
-  legacy: boolean;
-};
-
-function readNetHistory(): NetHistoryLoad | null {
+function readCascadePersisted(): CascadePersisted | null {
   for (const candidate of NET_HISTORY_PATHS) {
     try {
       if (!fs.existsSync(candidate)) continue;
       const text = fs.readFileSync(candidate, "utf8");
-      const payload = JSON.parse(text) as {
-        version?: unknown;
-        savedAt?: unknown;
-        historyMinutes?: unknown;
-        history?: unknown;
-      };
-      const historyMinutes = payload?.historyMinutes;
-      const historyLegacy = payload?.history;
-      const history = historyMinutes ?? historyLegacy;
-      if (!history || typeof history !== "object" || Array.isArray(history)) {
-        continue;
-      }
-      const normalized: NetHistoryPersisted = {
-        version: typeof payload?.version === "number" ? payload.version : 1,
-        savedAt: typeof payload?.savedAt === "number" ? payload.savedAt : 0,
-        historyMinutes: history as Record<string, Array<[number, number, number]>>
-      };
+      const raw = JSON.parse(text) as { version?: unknown; savedAt?: unknown; cascades?: unknown };
+      if (typeof raw?.version !== "number" || raw.version !== 2) continue;
+      if (!raw.cascades || typeof raw.cascades !== "object" || Array.isArray(raw.cascades)) continue;
       activeNetHistoryPath = candidate;
-      return { payload: normalized, legacy: !historyMinutes && !!historyLegacy };
+      return raw as CascadePersisted;
     } catch {
       // Try the next path.
     }
@@ -275,7 +267,7 @@ function readNetHistory(): NetHistoryLoad | null {
   return null;
 }
 
-async function writeNetHistory(payload: NetHistoryPersisted): Promise<boolean> {
+async function writeCascadePersisted(payload: CascadePersisted): Promise<boolean> {
   const text = JSON.stringify(payload);
   const candidates = activeNetHistoryPath ? [activeNetHistoryPath] : NET_HISTORY_PATHS;
   for (const candidate of candidates) {
@@ -292,7 +284,6 @@ async function writeNetHistory(payload: NetHistoryPersisted): Promise<boolean> {
   return false;
 }
 
-type NetHistoryEntry = { t: number; rx: number; tx: number };
 type HelperItem = {
   iface: string;
   name?: string;
@@ -1050,8 +1041,7 @@ class StatsPoller {
   private timer: NodeJS.Timeout | undefined;
   private lastSubscriptionCleanupAt = 0;
   private snapshot: StatsSnapshot = emptySnapshot();
-  private readonly netHistorySeconds = new Map<string, NetHistoryEntry[]>();
-  private readonly netHistoryMinutes = new Map<string, NetHistoryEntry[]>();
+  private readonly netCascades = new Map<string, TransferCascade>();
   private netHistoryDirty = false;
   private netHistoryPersistAt = 0;
   private netHistoryWritePending = false;
@@ -1154,96 +1144,42 @@ class StatsPoller {
     return this.snapshot;
   }
 
-    getNetworkTransfer(periodSec: number, iface?: string): { rxBytes: number | null; txBytes: number | null; totalBytes: number | null } {
+  getNetworkTransfer(periodSec: number, iface?: string): { rxBytes: number | null; txBytes: number | null; totalBytes: number | null } {
     const key = iface && iface.length > 0 ? iface : "total";
-    const seconds = this.netHistorySeconds.get(key);
+    const cascade = this.netCascades.get(key);
+    if (!cascade) return { rxBytes: null, txBytes: null, totalBytes: null };
+
+    // 60s = sum of secondDeltas (rolling 60s ring of per-poll deltas)
+    const rx60s = cascade.secondDeltas.reduce((sum, d) => sum + d.rx, 0);
+    const tx60s = cascade.secondDeltas.reduce((sum, d) => sum + d.tx, 0);
+
+    // 1H = sum(completedMinutes) + currentMinute, floored to >= 60s
+    let rxMinutes = cascade.currentMinute.rx;
+    let txMinutes = cascade.currentMinute.tx;
+    for (const m of cascade.completedMinutes) {
+      rxMinutes += m.rx;
+      txMinutes += m.tx;
+    }
+    const rx1H = Math.max(rxMinutes, rx60s);
+    const tx1H = Math.max(txMinutes, tx60s);
+
+    // 24H = sum(completedHours) + 1H
+    let rxHours = 0;
+    let txHours = 0;
+    for (const h of cascade.completedHours) {
+      rxHours += h.rx;
+      txHours += h.tx;
+    }
+    const rx24H = rxHours + rx1H;
+    const tx24H = txHours + tx1H;
 
     if (periodSec <= 60) {
-      return this.computeTransferFromHistory(seconds, periodSec);
+      return { rxBytes: rx60s, txBytes: tx60s, totalBytes: rx60s + tx60s };
     }
-
-    // Composite: use minute-level start + second-level end for responsive updates
-    const minutes = this.netHistoryMinutes.get(key);
-
-    // Best case: start from minutes or seconds (whichever is older), end from seconds
-    if (seconds && seconds.length >= 1) {
-      const cutoff = Date.now() - periodSec * 1000;
-      const end = seconds[seconds.length - 1];
-
-      // Find the best (oldest valid) start point across both data sources
-      let start: { t: number; rx: number; tx: number } | null = null;
-
-      // Check minutes for an older start
-      if (minutes && minutes.length >= 2) {
-        let candidate = minutes[0];
-        for (const entry of minutes) {
-          if (entry.t <= cutoff) { candidate = entry; continue; }
-          candidate = entry;
-          break;
-        }
-        start = candidate;
-      }
-
-      // Check seconds for an older start (e.g. shortly after minute boundary)
-      if (seconds.length >= 2) {
-        const secStart = seconds[0];
-        if (!start || secStart.t < start.t) {
-          start = secStart;
-        }
-      }
-
-      if (start && end.t >= start.t) {
-        const rxDelta = end.rx - start.rx;
-        const txDelta = end.tx - start.tx;
-        // Counter reset detection: if either delta is negative, old data has
-        // stale cumulative counters from a previous session — fall through.
-        if (rxDelta >= 0 && txDelta >= 0) {
-          return { rxBytes: rxDelta, txBytes: txDelta, totalBytes: rxDelta + txDelta };
-        }
-      }
+    if (periodSec <= 3600) {
+      return { rxBytes: rx1H, txBytes: tx1H, totalBytes: rx1H + tx1H };
     }
-
-    // Fallback: seconds-only (fresh install, no minute data yet — show what we have)
-    if (seconds && seconds.length >= 2) {
-      return this.computeTransferFromHistory(seconds, 60);
-    }
-
-    // Fallback: minutes-only (no seconds data)
-    if (minutes && minutes.length >= 2) {
-      return this.computeTransferFromHistory(minutes, periodSec);
-    }
-
-    // No data at all
-    if ((seconds && seconds.length === 1) || (minutes && minutes.length === 1)) {
-      return { rxBytes: 0, txBytes: 0, totalBytes: 0 };
-    }
-    return { rxBytes: null, txBytes: null, totalBytes: null };
-  }
-
-  private computeTransferFromHistory(
-    history: Array<{ t: number; rx: number; tx: number }> | undefined,
-    periodSec: number
-  ): { rxBytes: number | null; txBytes: number | null; totalBytes: number | null } {
-    if (!history || history.length === 0) {
-      return { rxBytes: null, txBytes: null, totalBytes: null };
-    }
-    if (history.length < 2) {
-      return { rxBytes: 0, txBytes: 0, totalBytes: 0 };
-    }
-    const cutoff = Date.now() - periodSec * 1000;
-    let start = history[0];
-    for (const entry of history) {
-      if (entry.t <= cutoff) { start = entry; continue; }
-      start = entry;
-      break;
-    }
-    const end = history[history.length - 1];
-    if (end.t < start.t) {
-      return { rxBytes: 0, txBytes: 0, totalBytes: 0 };
-    }
-    const rxBytes = Math.max(0, end.rx - start.rx);
-    const txBytes = Math.max(0, end.tx - start.tx);
-    return { rxBytes, txBytes, totalBytes: rxBytes + txBytes };
+    return { rxBytes: rx24H, txBytes: tx24H, totalBytes: rx24H + tx24H };
   }
 
   private updateGroupCount(group: MetricGroup, delta: number): void {
@@ -1287,6 +1223,9 @@ class StatsPoller {
     this.fsSizeCache = null;
     this.helperLastByIface.clear();
     this.helperSampleAt = 0;
+    for (const cascade of this.netCascades.values()) {
+      cascade.prevCounter = null;
+    }
   }
 
   private stopHelperIfIdle(): void {
@@ -1639,66 +1578,88 @@ class StatsPoller {
   }
 
   private loadNetHistory() {
-    const loaded = readNetHistory();
-    if (!loaded) return;
-    const { payload, legacy } = loaded;
+    const persisted = readCascadePersisted();
+    if (!persisted) return;
 
     const now = Date.now();
-    const cutoff = now - MAX_NET_HISTORY_MINUTES_MS;
+    const currentMinuteEpoch = Math.floor(now / 60000);
+    const currentHourEpoch = Math.floor(now / 3600000);
+    const oldestHourEpoch = currentHourEpoch - MAX_COMPLETED_HOURS;
 
-    for (const [key, entries] of Object.entries(payload.historyMinutes)) {
-      if (!Array.isArray(entries)) continue;
-      const list: NetHistoryEntry[] = [];
-      for (const entry of entries) {
-        if (!Array.isArray(entry) || entry.length < 3) continue;
-        const t = Number(entry[0]);
-        const rx = Number(entry[1]);
-        const tx = Number(entry[2]);
-        if (!Number.isFinite(t) || !Number.isFinite(rx) || !Number.isFinite(tx)) continue;
-        if (t < cutoff) continue;
-        list.push({ t, rx, tx });
+    for (const [key, data] of Object.entries(persisted.cascades)) {
+      if (!data || typeof data !== "object") continue;
+      const cascade = this.getOrCreateCascade(key);
+
+      // Load completedHours — drop entries older than 23 hours
+      if (Array.isArray(data.hours)) {
+        for (const entry of data.hours) {
+          if (!Array.isArray(entry) || entry.length < 3) continue;
+          const epoch = Number(entry[0]);
+          const rx = Number(entry[1]);
+          const tx = Number(entry[2]);
+          if (!Number.isFinite(epoch) || !Number.isFinite(rx) || !Number.isFinite(tx)) continue;
+          if (epoch < oldestHourEpoch) continue;
+          if (epoch >= currentHourEpoch) continue;
+          cascade.completedHours.push({ epoch, rx, tx });
+        }
+        cascade.completedHours.sort((a, b) => a.epoch - b.epoch);
       }
-      if (list.length > 0) {
-        list.sort((a, b) => a.t - b.t);
-        const minuteList: NetHistoryEntry[] = [];
-        let lastBucket = -1;
-        for (const entry of list) {
-          const bucket = Math.floor(entry.t / NET_HISTORY_MINUTE_MS);
-          if (bucket === lastBucket && minuteList.length > 0) {
-            minuteList[minuteList.length - 1] = entry;
-            continue;
+
+      // Load completedMinutes — roll up any belonging to a completed hour epoch
+      if (Array.isArray(data.minutes)) {
+        for (const entry of data.minutes) {
+          if (!Array.isArray(entry) || entry.length < 3) continue;
+          const epoch = Number(entry[0]);
+          const rx = Number(entry[1]);
+          const tx = Number(entry[2]);
+          if (!Number.isFinite(epoch) || !Number.isFinite(rx) || !Number.isFinite(tx)) continue;
+          cascade.completedMinutes.push({ epoch, rx, tx });
+        }
+        this.rollupCascadeHours(cascade, currentHourEpoch);
+        while (cascade.completedHours.length > MAX_COMPLETED_HOURS) {
+          cascade.completedHours.shift();
+        }
+      }
+
+      // Load currentMinute
+      if (Array.isArray(data.currentMinute) && data.currentMinute.length >= 3) {
+        const epoch = Number(data.currentMinute[0]);
+        const rx = Number(data.currentMinute[1]);
+        const tx = Number(data.currentMinute[2]);
+        if (Number.isFinite(epoch) && Number.isFinite(rx) && Number.isFinite(tx)) {
+          if (epoch === currentMinuteEpoch) {
+            // Same minute — resume accumulating
+            cascade.currentMinute = { epoch, rx, tx };
+          } else if (epoch > 0) {
+            // Past minute — complete it and start fresh
+            cascade.completedMinutes.push({ epoch, rx, tx });
+            this.rollupCascadeHours(cascade, currentHourEpoch);
+            while (cascade.completedHours.length > MAX_COMPLETED_HOURS) {
+              cascade.completedHours.shift();
+            }
+            cascade.currentMinute = { epoch: currentMinuteEpoch, rx: 0, tx: 0 };
           }
-          minuteList.push(entry);
-          lastBucket = bucket;
-        }
-        if (minuteList.length > 0) {
-          this.netHistoryMinutes.set(key, minuteList);
         }
       }
+
+      // secondDeltas and prevCounter are in-memory only — left empty
     }
 
-    if (legacy) {
-      this.netHistoryDirty = true;
-    }
     this.netHistoryPersistAt = now;
   }
 
   private async persistNetHistory(force = false): Promise<void> {
     const now = Date.now();
 
-    // If not forced, check debounce conditions
     if (!force) {
       if (!this.netHistoryDirty) return;
 
-      // Debounce: only write if enough time has elapsed
       const timeSinceLastWrite = now - this.netHistoryPersistAt;
       if (timeSinceLastWrite < NET_HISTORY_PERSIST_MS) {
-        // Schedule a future write if not already pending
         if (!this.netHistoryWritePending) {
           this.netHistoryWritePending = true;
           const delay = NET_HISTORY_PERSIST_MS - timeSinceLastWrite;
 
-          // Clear any existing timer
           if (this.netHistoryWriteTimer) {
             clearTimeout(this.netHistoryWriteTimer);
           }
@@ -1713,15 +1674,19 @@ class StatsPoller {
       }
     }
 
-    if (this.netHistoryMinutes.size === 0) return;
+    if (this.netCascades.size === 0) return;
 
-    const historyMinutes: Record<string, Array<[number, number, number]>> = {};
-    for (const [key, entries] of this.netHistoryMinutes.entries()) {
-      historyMinutes[key] = entries.map((entry) => [entry.t, entry.rx, entry.tx]);
+    const cascades: CascadePersisted["cascades"] = {};
+    for (const [key, cascade] of this.netCascades.entries()) {
+      cascades[key] = {
+        hours: cascade.completedHours.map((h) => [h.epoch, h.rx, h.tx]),
+        minutes: cascade.completedMinutes.map((m) => [m.epoch, m.rx, m.tx]),
+        currentMinute: [cascade.currentMinute.epoch, cascade.currentMinute.rx, cascade.currentMinute.tx]
+      };
     }
 
     try {
-      const success = await writeNetHistory({ version: 1, savedAt: now, historyMinutes });
+      const success = await writeCascadePersisted({ version: 2, savedAt: now, cascades });
       if (success) {
         this.netHistoryPersistAt = now;
         this.netHistoryDirty = false;
@@ -1731,36 +1696,125 @@ class StatsPoller {
     }
   }
 
-  private updateNetHistory(key: string, rxBytes: number | null, txBytes: number | null, now: number) {
-    if (rxBytes === null || txBytes === null) return;
+  private getOrCreateCascade(key: string): TransferCascade {
+    let cascade = this.netCascades.get(key);
+    if (!cascade) {
+      cascade = {
+        secondDeltas: [],
+        currentMinute: { epoch: 0, rx: 0, tx: 0 },
+        completedMinutes: [],
+        completedHours: [],
+        prevCounter: null
+      };
+      this.netCascades.set(key, cascade);
+    }
+    return cascade;
+  }
 
-    const entry = { t: now, rx: rxBytes, tx: txBytes };
+  private feedNetCascades(netInterfaces: NetInterfaceSnapshot[], now: number): void {
+    let totalRxDelta = 0;
+    let totalTxDelta = 0;
 
-    const secondsList = this.netHistorySeconds.get(key) ?? [];
-    secondsList.push(entry);
+    for (const net of netInterfaces) {
+      if (net.rxBytes === null || net.txBytes === null) continue;
+      const cascade = this.getOrCreateCascade(net.iface);
+      const delta = this.computeAndFeedDelta(cascade, net.rxBytes, net.txBytes, now);
+      totalRxDelta += delta.rx;
+      totalTxDelta += delta.tx;
+    }
+
+    // Feed total from summed per-interface deltas (not cumulative total)
+    const totalCascade = this.getOrCreateCascade("total");
+    this.feedCascadeDelta(totalCascade, totalRxDelta, totalTxDelta, now);
+  }
+
+  private computeAndFeedDelta(
+    cascade: TransferCascade,
+    rxBytes: number,
+    txBytes: number,
+    now: number
+  ): { rx: number; tx: number } {
+    let rxDelta = 0;
+    let txDelta = 0;
+
+    if (cascade.prevCounter) {
+      const rxRaw = rxBytes - cascade.prevCounter.rx;
+      const txRaw = txBytes - cascade.prevCounter.tx;
+      rxDelta = rxRaw >= 0 ? rxRaw : 0;
+      txDelta = txRaw >= 0 ? txRaw : 0;
+    }
+    cascade.prevCounter = { rx: rxBytes, tx: txBytes };
+
+    this.feedCascadeDelta(cascade, rxDelta, txDelta, now);
+    return { rx: rxDelta, tx: txDelta };
+  }
+
+  private feedCascadeDelta(cascade: TransferCascade, rxDelta: number, txDelta: number, now: number): void {
+    // Push to secondDeltas ring, evict entries older than 60s
+    cascade.secondDeltas.push({ t: now, rx: rxDelta, tx: txDelta });
     const secondCutoff = now - MAX_NET_HISTORY_SECONDS_MS;
-    while (secondsList.length > 1 && secondsList[0].t < secondCutoff) {
-      secondsList.shift();
+    while (cascade.secondDeltas.length > 0 && cascade.secondDeltas[0].t < secondCutoff) {
+      cascade.secondDeltas.shift();
     }
-    this.netHistorySeconds.set(key, secondsList);
 
-    const minuteList = this.netHistoryMinutes.get(key) ?? [];
-    const minuteBucket = Math.floor(now / NET_HISTORY_MINUTE_MS);
-    const lastEntry = minuteList.length > 0 ? minuteList[minuteList.length - 1] : null;
-    const lastBucket = lastEntry ? Math.floor(lastEntry.t / NET_HISTORY_MINUTE_MS) : -1;
-    if (minuteBucket === lastBucket && lastEntry) {
-      lastEntry.t = entry.t;
-      lastEntry.rx = entry.rx;
-      lastEntry.tx = entry.tx;
-    } else {
-      minuteList.push({ ...entry });
-      this.netHistoryDirty = true;
+    // Check minute epoch — if changed, trigger rollup
+    const minuteEpoch = Math.floor(now / 60000);
+    if (cascade.currentMinute.epoch !== minuteEpoch) {
+      this.rollupCascadeMinute(cascade, minuteEpoch);
     }
-    const minuteCutoff = now - MAX_NET_HISTORY_MINUTES_MS;
-    while (minuteList.length > 1 && minuteList[0].t < minuteCutoff) {
-      minuteList.shift();
+
+    // Accumulate into current minute
+    cascade.currentMinute.rx += rxDelta;
+    cascade.currentMinute.tx += txDelta;
+    this.netHistoryDirty = true;
+  }
+
+  private rollupCascadeMinute(cascade: TransferCascade, newEpoch: number): void {
+    // Push completed currentMinute to completedMinutes (skip initial epoch 0)
+    if (cascade.currentMinute.epoch > 0) {
+      cascade.completedMinutes.push({ ...cascade.currentMinute });
     }
-    this.netHistoryMinutes.set(key, minuteList);
+
+    // Roll up any completed minutes from previous hours
+    const currentHourEpoch = Math.floor(newEpoch / 60);
+    this.rollupCascadeHours(cascade, currentHourEpoch);
+
+    // Trim completedHours to max 23
+    while (cascade.completedHours.length > MAX_COMPLETED_HOURS) {
+      cascade.completedHours.shift();
+    }
+
+    // Reset current minute
+    cascade.currentMinute = { epoch: newEpoch, rx: 0, tx: 0 };
+  }
+
+  private rollupCascadeHours(cascade: TransferCascade, currentHourEpoch: number): void {
+    const remaining: Array<{ epoch: number; rx: number; tx: number }> = [];
+    const hourBuckets = new Map<number, { rx: number; tx: number }>();
+
+    for (const m of cascade.completedMinutes) {
+      const hourEpoch = Math.floor(m.epoch / 60);
+      if (hourEpoch < currentHourEpoch) {
+        const bucket = hourBuckets.get(hourEpoch) ?? { rx: 0, tx: 0 };
+        bucket.rx += m.rx;
+        bucket.tx += m.tx;
+        hourBuckets.set(hourEpoch, bucket);
+      } else {
+        remaining.push(m);
+      }
+    }
+
+    cascade.completedMinutes = remaining;
+
+    // Trim to max 59 completed minutes
+    while (cascade.completedMinutes.length > MAX_COMPLETED_MINUTES) {
+      cascade.completedMinutes.shift();
+    }
+
+    for (const [hourEpoch, bucket] of hourBuckets) {
+      cascade.completedHours.push({ epoch: hourEpoch, rx: bucket.rx, tx: bucket.tx });
+    }
+    cascade.completedHours.sort((a, b) => a.epoch - b.epoch);
   }
 
   private shouldPoll(
@@ -2061,10 +2115,7 @@ class StatsPoller {
       const netTotal = netInterfaces.length > 0 ? sumNet(netInterfaces) : this.snapshot.net.total;
 
       const now = Date.now();
-      this.updateNetHistory("total", netTotal.rxBytes, netTotal.txBytes, now);
-      for (const net of netInterfaces) {
-        this.updateNetHistory(net.iface, net.rxBytes, net.txBytes, now);
-      }
+      this.feedNetCascades(netInterfaces, now);
       void this.persistNetHistory();
 
       this.snapshot = {

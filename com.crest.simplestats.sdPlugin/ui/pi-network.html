@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <script src="sdpi-components.js"></script>
+    <link rel="stylesheet" href="pi-common.css" />
+    <title>Network</title>
+  </head>
+  <body>
+    <sdpi-item id="metric-row" label="Metric">
+      <sdpi-select id="metric" setting="metric"></sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="net-row" label="Interface">
+      <div class="select-with-refresh">
+        <select id="net" class="sdpi-item-value"></select>
+        <button id="rescan-interfaces" class="refresh-btn" title="Rescan interfaces" aria-label="Rescan interfaces">&#8635;</button>
+      </div>
+    </sdpi-item>
+
+    <sdpi-item id="net-period-row" label="Transfer Period">
+      <sdpi-select id="net-period" setting="netPeriodSec">
+        <option value="60">Last 60 seconds</option>
+        <option value="3600">Last hour</option>
+        <option value="86400">Last 24 hours</option>
+      </sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="net-total-note">
+      <div class="help-text">Totals are recorded only when the Stream Deck app is active.</div>
+    </sdpi-item>
+
+    <sdpi-item id="poll-row" label="Polling">
+      <sdpi-select id="poll-interval" setting="pollIntervalSec">
+        <option value="1">1 sec</option>
+        <option value="2">2 sec</option>
+        <option value="3">3 sec</option>
+        <option value="4">4 sec</option>
+        <option value="5">5 sec</option>
+      </sdpi-select>
+    </sdpi-item>
+
+    <sdpi-item id="warn-threshold-row" label="Alert %">
+      <sdpi-textfield id="warn-threshold" type="number" placeholder="0 (off)"></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item id="threshold-note">
+      <div class="help-text">Value text and graph line turn red when above threshold.</div>
+    </sdpi-item>
+
+    <script src="pi-common.js"></script>
+    <script src="pi-network.js"></script>
+  </body>
+</html>
