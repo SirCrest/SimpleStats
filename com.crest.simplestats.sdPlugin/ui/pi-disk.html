@@ -41,6 +41,14 @@
       <div class="help-text">Value text and graph line turn red when above threshold.</div>
     </sdpi-item>
 
+    <sdpi-item id="top-threshold-row" label="Idle below (MB/s)">
+      <sdpi-textfield id="top-threshold" type="number" placeholder="5"></sdpi-textfield>
+    </sdpi-item>
+
+    <sdpi-item id="top-threshold-note">
+      <div class="help-text">Shows IDLE when top process is below this MB/s. 0 to disable.</div>
+    </sdpi-item>
+
     <script src="pi-common.js"></script>
     <script src="pi-disk.js"></script>
   </body>

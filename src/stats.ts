@@ -72,6 +72,9 @@ export type TopProcessSnapshot = {
   memMB: number | null;
   cpuIconBase64: string | null;
   memIconBase64: string | null;
+  diskName: string | null;
+  diskBps: number | null;
+  diskIconBase64: string | null;
 };
 
 export type StatsSnapshot = {
@@ -338,6 +341,9 @@ type HelperTopProcess = {
   memMB: number | null;
   cpuIconBase64: string | null;
   memIconBase64: string | null;
+  diskName: string | null;
+  diskBps: number | null;
+  diskIconBase64: string | null;
 };
 type HelperSnapshot = {
   t: number;
@@ -404,7 +410,10 @@ function emptySnapshot(): StatsSnapshot {
       memName: null,
       memMB: null,
       cpuIconBase64: null,
-      memIconBase64: null
+      memIconBase64: null,
+      diskName: null,
+      diskBps: null,
+      diskIconBase64: null
     }
   };
 }
@@ -972,7 +981,12 @@ function parseHelperSnapshot(payload: unknown): HelperSnapshot | null {
       ? (topProcessRaw as { cpuIconBase64: string }).cpuIconBase64 : null;
     const memIconBase64 = typeof (topProcessRaw as { memIconBase64?: unknown }).memIconBase64 === "string"
       ? (topProcessRaw as { memIconBase64: string }).memIconBase64 : null;
-    topProcess = { cpuName, cpuPct, memName, memMB, cpuIconBase64, memIconBase64 };
+    const diskName = typeof (topProcessRaw as { diskName?: unknown }).diskName === "string"
+      ? (topProcessRaw as { diskName: string }).diskName : null;
+    const diskBps = parseNumberFromUnknown((topProcessRaw as { diskBps?: unknown }).diskBps);
+    const diskIconBase64 = typeof (topProcessRaw as { diskIconBase64?: unknown }).diskIconBase64 === "string"
+      ? (topProcessRaw as { diskIconBase64: string }).diskIconBase64 : null;
+    topProcess = { cpuName, cpuPct, memName, memMB, cpuIconBase64, memIconBase64, diskName, diskBps, diskIconBase64 };
   }
 
   return { t, items, disks, cpu, diskPerf, mem, gpus, topProcess };
@@ -1893,7 +1907,10 @@ class StatsPoller {
             memName: helperTopProcess.memName,
             memMB: toNumber(helperTopProcess.memMB),
             cpuIconBase64: helperTopProcess.cpuIconBase64,
-            memIconBase64: helperTopProcess.memIconBase64
+            memIconBase64: helperTopProcess.memIconBase64,
+            diskName: helperTopProcess.diskName,
+            diskBps: toNumber(helperTopProcess.diskBps),
+            diskIconBase64: helperTopProcess.diskIconBase64
           }
         : this.snapshot.topProcess;
 

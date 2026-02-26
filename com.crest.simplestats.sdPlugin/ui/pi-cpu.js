@@ -1,6 +1,6 @@
 (() => {
-  const { initPI, setSettings, setVisible, wireInput, wireButton, readCheckboxValue,
-    readCheckboxValueFromEvent, readPositiveInt, PERCENT_METRICS, TOP_PROCESS_METRICS } = window.piCommon;
+  const { initPI, setSettings, setVisible, wireInput, wireButton,
+    readPositiveInt, PERCENT_METRICS, TOP_PROCESS_METRICS } = window.piCommon;
 
   const METRICS = [
     { value: "cpu-total", label: "Total Usage" },
@@ -37,21 +37,20 @@
 
   function normalizeSettings(settings) {
     const candidateMetric = settings.metric;
-    const cpuPerCore = typeof settings.cpuPerCore === "boolean" ? settings.cpuPerCore : candidateMetric === "cpu-core";
+    const cpuPerCore = typeof settings.cpuPerCore === "boolean"
+      ? settings.cpuPerCore : candidateMetric === "cpu-core";
     let metric = DEFAULT_METRIC;
-    if (candidateMetric === "cpu-peak" || candidateMetric === "top-cpu") {
+    if (candidateMetric === "cpu-peak" || candidateMetric === "top-cpu" ||
+        candidateMetric === "cpu-core" || candidateMetric === "cpu-total") {
       metric = candidateMetric;
     } else {
       metric = cpuPerCore ? "cpu-core" : "cpu-total";
     }
-    return { metric, cpuPerCore: Boolean(cpuPerCore) };
+    return { metric, cpuPerCore: metric === "cpu-core" };
   }
 
   function updateVisibility(metric) {
-    const isSpecialCpu = metric === "cpu-peak" || metric === "top-cpu";
-    const cpuPerCore = readCheckboxValue(document.getElementById("cpu-per-core"));
-    setVisible(document.getElementById("cpu-mode-row"), !isSpecialCpu);
-    setVisible(document.getElementById("cpu-core-row"), cpuPerCore && !isSpecialCpu);
+    setVisible(document.getElementById("cpu-core-row"), metric === "cpu-core");
     setVisible(document.getElementById("poll-row"), true);
 
     const isPercent = PERCENT_METRICS.has(metric);
@@ -63,19 +62,9 @@
   }
 
   async function handleMetricChange(metric) {
-    const isSpecialCpu = metric === "cpu-peak" || metric === "top-cpu";
-    const cpuPerCore = isSpecialCpu ? false : metric === "cpu-core";
+    const cpuPerCore = metric === "cpu-core";
     updateVisibility(metric);
     await setSettings({ metric, cpuPerCore });
-  }
-
-  async function handleCpuModeChange(event) {
-    if (window.piCommon.suppressEvents) return;
-    const cpuPerCore = readCheckboxValueFromEvent(event, document.getElementById("cpu-per-core"));
-    const metric = cpuPerCore ? "cpu-core" : "cpu-total";
-    document.getElementById("metric").value = metric;
-    updateVisibility(metric);
-    await setSettings({ cpuPerCore, metric });
   }
 
   async function handleCpuCoreChange(event) {
@@ -98,11 +87,9 @@
   }
 
   function wireDeviceControls() {
-    const cpuPerCoreEl = document.getElementById("cpu-per-core");
     const cpuCoreEl = document.getElementById("cpu-core");
     const cpuCoreDownEl = document.getElementById("cpu-core-down");
     const cpuCoreUpEl = document.getElementById("cpu-core-up");
-    if (cpuPerCoreEl) wireInput(cpuPerCoreEl, handleCpuModeChange);
     if (cpuCoreEl) wireInput(cpuCoreEl, handleCpuCoreChange);
     if (cpuCoreDownEl) wireButton(cpuCoreDownEl, () => { void stepCpuCore(-1); });
     if (cpuCoreUpEl) wireButton(cpuCoreUpEl, () => { void stepCpuCore(1); });
@@ -112,17 +99,6 @@
     if (settings && typeof settings.cpuCoreMax !== "undefined") {
       const parsedMax = parseInt(settings.cpuCoreMax, 10);
       if (Number.isFinite(parsedMax) && parsedMax > 0) maxCpuCore = Math.floor(parsedMax);
-    }
-    const cpuPerCoreEl = document.getElementById("cpu-per-core");
-    if (cpuPerCoreEl) {
-      cpuPerCoreEl.value = normalized.cpuPerCore;
-      if (typeof cpuPerCoreEl.checked === "boolean") cpuPerCoreEl.checked = normalized.cpuPerCore;
-      if (typeof cpuPerCoreEl.toggleAttribute === "function") {
-        cpuPerCoreEl.toggleAttribute("checked", normalized.cpuPerCore);
-      } else if (typeof cpuPerCoreEl.setAttribute === "function") {
-        if (normalized.cpuPerCore) cpuPerCoreEl.setAttribute("checked", "");
-        else cpuPerCoreEl.removeAttribute("checked");
-      }
     }
     const cpuCoreEl = document.getElementById("cpu-core");
     if (cpuCoreEl) {

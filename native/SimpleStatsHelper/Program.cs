@@ -55,7 +55,10 @@ public sealed record TopProcessPayload(
   string? memName,
   double? memMB,
   string? cpuIconBase64,
-  string? memIconBase64
+  string? memIconBase64,
+  string? diskName,
+  double? diskBps,
+  string? diskIconBase64
 );
 
 public sealed record NetPayload(
@@ -913,6 +916,23 @@ internal sealed class TopProcessSampler
     public nuint PrivateWorkingSetSize, SharedCommitUsage;
   }
 
+  [DllImport("kernel32.dll", SetLastError = true)]
+  private static extern bool GetProcessIoCounters(IntPtr hProcess, out IO_COUNTERS lpIoCounters);
+
+  [StructLayout(LayoutKind.Sequential)]
+  private struct IO_COUNTERS
+  {
+    public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
+    public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
+  }
+
+  private static (ulong read, ulong write) GetIoBytes(Process proc)
+  {
+    try { if (GetProcessIoCounters(proc.Handle, out var c)) return (c.ReadTransferCount, c.WriteTransferCount); }
+    catch { }
+    return (0, 0);
+  }
+
   private static long GetPrivateWorkingSet(Process proc)
   {
     try
@@ -945,6 +965,12 @@ internal sealed class TopProcessSampler
   private string? _lastMemProcessName;
   private string? _lastMemFriendlyName;
   private string? _lastMemIconBase64;
+  private Dictionary<int, (ulong read, ulong write)>? _prevIo;
+  private int _lastDiskId = -1;
+  private string? _lastDiskProcessName;
+  private string? _lastDiskFriendlyName;
+  private string? _lastDiskIconBase64;
+  private readonly Dictionary<string, double> _diskScores = new(StringComparer.OrdinalIgnoreCase);
 
   public TopProcessSampler()
   {
@@ -962,6 +988,7 @@ internal sealed class TopProcessSampler
   public TopProcessPayload? Sample(long nowMs)
   {
     var snapshots = new Dictionary<int, ProcessSnapshot>();
+    var ioSnapshots = new Dictionary<int, (ulong read, ulong write)>();
     foreach (var proc in Process.GetProcesses())
     {
       try
@@ -969,6 +996,8 @@ internal sealed class TopProcessSampler
         if (Excluded.Contains(proc.ProcessName)) { proc.Dispose(); continue; }
         var snap = new ProcessSnapshot(proc.Id, proc.ProcessName, proc.TotalProcessorTime, GetPrivateWorkingSet(proc));
         snapshots[proc.Id] = snap;
+        var io = GetIoBytes(proc);
+        ioSnapshots[proc.Id] = io;
       }
       catch
       {
@@ -1006,10 +1035,10 @@ internal sealed class TopProcessSampler
     }
 
     // CPU: need two snapshots to compute delta
-    // Build per-process CPU% map for momentum lookup
+    // Build per-process CPU% map summed by name for momentum lookup
     string? rawCpuName = null;
     double rawCpuPct = 0;
-    var cpuByName = new Dictionary<string, (double pct, int id)>(StringComparer.OrdinalIgnoreCase);
+    var cpuByName = new Dictionary<string, (double pct, int bestId, double bestPct)>(StringComparer.OrdinalIgnoreCase);
     if (_prev != null && nowMs > _prevMs)
     {
       double elapsedMs = nowMs - _prevMs;
@@ -1018,13 +1047,19 @@ internal sealed class TopProcessSampler
         if (!_prev.TryGetValue(id, out var prev)) continue;
         double cpuMs = (curr.CpuTime - prev.CpuTime).TotalMilliseconds;
         double pct = cpuMs / elapsedMs / _logicalProcessors * 100.0;
-        // Track best per name (multiple PIDs may share a name)
-        if (!cpuByName.TryGetValue(curr.Name, out var existing) || pct > existing.pct)
-          cpuByName[curr.Name] = (pct, id);
-        if (pct > rawCpuPct)
+        // Sum across PIDs with the same name (matches Task Manager)
+        if (!cpuByName.TryGetValue(curr.Name, out var existing))
+          cpuByName[curr.Name] = (pct, id, pct);
+        else
+          cpuByName[curr.Name] = (existing.pct + pct, pct > existing.bestPct ? id : existing.bestId, Math.Max(pct, existing.bestPct));
+      }
+      // Find name with highest summed CPU%
+      foreach (var (name, data) in cpuByName)
+      {
+        if (data.pct > rawCpuPct)
         {
-          rawCpuPct = pct;
-          rawCpuName = curr.Name;
+          rawCpuPct = data.pct;
+          rawCpuName = name;
         }
       }
     }
@@ -1033,6 +1068,41 @@ internal sealed class TopProcessSampler
     var memByName = new Dictionary<string, (double mb, int id)>(StringComparer.OrdinalIgnoreCase);
     foreach (var (name, data) in memSumByName)
       memByName[name] = (data.totalMB, data.bestId);
+
+    // Disk I/O: compute per-process bytes/sec delta, sum by name, apply momentum
+    string? rawDiskName = null;
+    double rawDiskBps = 0;
+    var diskByName = new Dictionary<string, (double bps, int bestId, double bestBps)>(StringComparer.OrdinalIgnoreCase);
+    if (_prevIo != null && nowMs > _prevMs)
+    {
+      double elapsedSec = (nowMs - _prevMs) / 1000.0;
+      if (elapsedSec > 0)
+      {
+        foreach (var (id, currIo) in ioSnapshots)
+        {
+          if (!_prevIo.TryGetValue(id, out var prevIo)) continue;
+          if (!snapshots.TryGetValue(id, out var snap)) continue;
+          ulong dRead = currIo.read >= prevIo.read ? currIo.read - prevIo.read : 0;
+          ulong dWrite = currIo.write >= prevIo.write ? currIo.write - prevIo.write : 0;
+          double bps = (dRead + dWrite) / elapsedSec;
+          // Sum across PIDs with the same name (matches Task Manager)
+          if (!diskByName.TryGetValue(snap.Name, out var existing))
+            diskByName[snap.Name] = (bps, id, bps);
+          else
+            diskByName[snap.Name] = (existing.bps + bps, bps > existing.bestBps ? id : existing.bestId, Math.Max(bps, existing.bestBps));
+        }
+        // Find name with highest summed I/O
+        foreach (var (name, data) in diskByName)
+        {
+          if (data.bps > rawDiskBps)
+          {
+            rawDiskBps = data.bps;
+            rawDiskName = name;
+          }
+        }
+      }
+    }
+    _prevIo = ioSnapshots;
 
     _prev = snapshots;
     _prevMs = nowMs;
@@ -1048,7 +1118,7 @@ internal sealed class TopProcessSampler
       {
         topCpuName = stickyCpu;
         topCpuPct = Math.Round(stickyData.pct, 1);
-        topCpuId = stickyData.id;
+        topCpuId = stickyData.bestId;
       }
       else
       {
@@ -1057,7 +1127,7 @@ internal sealed class TopProcessSampler
         topCpuName = rawCpuName;
         topCpuPct = Math.Round(rawCpuPct, 1);
         if (cpuByName.TryGetValue(rawCpuName, out var rawData))
-          topCpuId = rawData.id;
+          topCpuId = rawData.bestId;
       }
     }
 
@@ -1083,7 +1153,30 @@ internal sealed class TopProcessSampler
       }
     }
 
-    if (topCpuName == null && topMemName2 == null) return null;
+    // Apply momentum scoring for disk I/O
+    string? topDiskName = null;
+    double topDiskBps = 0;
+    int topDiskId = -1;
+    if (rawDiskName != null)
+    {
+      var stickyDisk = MomentumHelper.Apply(_diskScores, rawDiskName, rawDiskBps, 500_000_000.0);
+      if (stickyDisk != null && diskByName.TryGetValue(stickyDisk, out var stickyData))
+      {
+        topDiskName = stickyDisk;
+        topDiskBps = stickyData.bps;
+        topDiskId = stickyData.bestId;
+      }
+      else
+      {
+        if (stickyDisk != null) _diskScores.Remove(stickyDisk);
+        topDiskName = rawDiskName;
+        topDiskBps = rawDiskBps;
+        if (diskByName.TryGetValue(rawDiskName, out var rawData))
+          topDiskId = rawData.bestId;
+      }
+    }
+
+    if (topCpuName == null && topMemName2 == null && topDiskName == null) return null;
 
     bool cpuWinnerChanged =
       topCpuId != _lastCpuId ||
@@ -1147,10 +1240,43 @@ internal sealed class TopProcessSampler
       _lastMemIconBase64 = null;
     }
 
+    bool diskWinnerChanged =
+      topDiskId != _lastDiskId ||
+      !string.Equals(topDiskName, _lastDiskProcessName, StringComparison.OrdinalIgnoreCase);
+    if (topDiskName == null)
+    {
+      _lastDiskId = -1;
+      _lastDiskProcessName = null;
+      _lastDiskFriendlyName = null;
+      _lastDiskIconBase64 = null;
+    }
+    else if (topDiskId > 0)
+    {
+      if (diskWinnerChanged || _lastDiskFriendlyName == null)
+      {
+        _lastDiskFriendlyName = Truncate(FriendlyNameHelper.GetFriendlyName(topDiskId, topDiskName), 30);
+      }
+      if (diskWinnerChanged || _lastDiskIconBase64 == null)
+      {
+        _lastDiskIconBase64 = IconHelper.GetIconBase64(topDiskId);
+      }
+      _lastDiskId = topDiskId;
+      _lastDiskProcessName = topDiskName;
+    }
+    else
+    {
+      _lastDiskId = topDiskId;
+      _lastDiskProcessName = topDiskName;
+      _lastDiskFriendlyName = Truncate(topDiskName, 30);
+      _lastDiskIconBase64 = null;
+    }
+
     string? cpuFriendly = topCpuName == null ? null : _lastCpuFriendlyName ?? Truncate(topCpuName, 30);
     string? memFriendly = topMemName2 == null ? null : _lastMemFriendlyName ?? Truncate(topMemName2, 30);
+    string? diskFriendly = topDiskName == null ? null : _lastDiskFriendlyName ?? Truncate(topDiskName, 30);
     string? cpuIcon = topCpuName == null ? null : _lastCpuIconBase64;
     string? memIcon = topMemName2 == null ? null : _lastMemIconBase64;
+    string? diskIcon = topDiskName == null ? null : _lastDiskIconBase64;
 
     return new TopProcessPayload(
       cpuName: cpuFriendly,
@@ -1158,7 +1284,10 @@ internal sealed class TopProcessSampler
       memName: memFriendly,
       memMB: topMemMB2 >= 0 ? Math.Round(topMemMB2, 0) : null,
       cpuIconBase64: cpuIcon,
-      memIconBase64: memIcon
+      memIconBase64: memIcon,
+      diskName: diskFriendly,
+      diskBps: topDiskBps > 0 ? Math.Round(topDiskBps, 0) : null,
+      diskIconBase64: diskIcon
     );
   }
 
@@ -1205,11 +1334,12 @@ internal static class IconHelper
       if (string.IsNullOrEmpty(path)) { s_cache.Set(name, null); return null; }
       using var icon = Icon.ExtractAssociatedIcon(path);
       if (icon == null) { s_cache.Set(name, null); return null; }
-      using var bmp = new Bitmap(24, 24);
+      using var bmp = new Bitmap(48, 48);
       using (var g = Graphics.FromImage(bmp))
       {
         g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
-        g.DrawIcon(icon, new Rectangle(0, 0, 24, 24));
+        using var largeIcon = new Icon(icon, 48, 48);
+        g.DrawIcon(largeIcon, new Rectangle(0, 0, 48, 48));
       }
       using var ms = new MemoryStream();
       bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);

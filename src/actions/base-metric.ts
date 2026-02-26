@@ -159,6 +159,7 @@ export type MetricId =
   | "top-cpu"
   | "top-mem"
   | "top-mem-pct"
+  | "top-disk"
   | "clock";
 
 export type Settings = {
@@ -203,6 +204,7 @@ type ActionState = {
   lastRawGroup?: string;
   lastRenderAt?: number;
   diskSpaceWarmupComplete?: boolean;
+  lastEffectiveDiskId?: string;
 };
 
 type MetricDisplay = {
@@ -239,7 +241,7 @@ const HISTORY_WINDOW_SEC = 60;
 const HISTORY_CACHE_TTL_MS = 10 * 60 * 1000;
 const HISTORY_CACHE_MAX = 200;
 const historyCache = new Map<string, HistoryCacheEntry>();
-const BACKGROUND_TTL_MS = HISTORY_WINDOW_SEC * 1000;
+const BACKGROUND_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours — keeps history alive across realistic Stream Deck sessions
 
 type BackgroundState = {
   settings: NormalizedSettings;
@@ -249,6 +251,7 @@ type BackgroundState = {
   expiresAt: number;
   bgId: string;
   cacheKey: string;
+  lastEffectiveDiskId?: string;
 };
 
 const backgroundStates = new Map<string, BackgroundState>();
@@ -258,7 +261,7 @@ const METRICS_BY_GROUP: Record<MetricGroup, MetricId[]> = {
   cpu: ["cpu-total", "cpu-core", "cpu-peak", "top-cpu"],
   gpu: ["gpu-load", "gpu-vram", "gpu-vram-used", "gpu-temp", "gpu-power", "gpu-top-compute"],
   memory: ["mem-total", "mem-used", "top-mem", "top-mem-pct"],
-  disk: ["disk-activity", "disk-used", "disk-free", "disk-read", "disk-write"],
+  disk: ["disk-activity", "disk-used", "disk-free", "disk-read", "disk-write", "top-disk"],
   network: ["net-down", "net-up", "net-total"],
   system: ["clock"]
 };
@@ -467,6 +470,13 @@ function updateBackgroundState(state: BackgroundState, snapshot: StatsSnapshot, 
   state.lastRenderAt = now;
   state.history.setMaxPoints(historyPointsForInterval(intervalMs / 1000));
   const display = buildMetricDisplay(snapshot, state.settings);
+  if (state.settings.diskId === "" && state.settings.group === "disk" && state.settings.metric !== "top-disk") {
+    const effectiveId = selectBusiestDiskId(snapshot);
+    if (state.lastEffectiveDiskId && effectiveId && state.lastEffectiveDiskId !== effectiveId) {
+      state.history.clear();
+    }
+    state.lastEffectiveDiskId = effectiveId;
+  }
   state.history.push(display.graphValue);
   historyCache.set(state.cacheKey, {
     values: state.history.getValues(),
@@ -604,19 +614,22 @@ function wordBreak(text: string, targetIdx: number): number {
 }
 
 function renderProcessName(name: string, color: string): string {
-  const font = `font-family="Segoe UI, Arial, sans-serif" font-weight="600" fill="${color}"`;
+  const base = `font-family="Segoe UI, Arial, sans-serif" font-weight="600" text-anchor="middle"`;
+  const shadowed = (x: number, y: number, fs: number, attrs: string, content: string) =>
+    `<text x="${x-1}" y="${y-1}" ${base} font-size="${fs}" fill="#000000"${attrs}>${content}</text>
+    <text x="${x+1}" y="${y-1}" ${base} font-size="${fs}" fill="#000000"${attrs}>${content}</text>
+    <text x="${x-1}" y="${y+1}" ${base} font-size="${fs}" fill="#000000"${attrs}>${content}</text>
+    <text x="${x+1}" y="${y+1}" ${base} font-size="${fs}" fill="#000000"${attrs}>${content}</text>
+    <text x="${x}" y="${y}" ${base} font-size="${fs}" fill="${color}"${attrs}>${content}</text>`;
   if (name.length <= 12) {
-    return `<text x="36" y="48" text-anchor="middle" ${font}
-      font-size="9"${procTextLengthAttrs(name)}>${escapeSvg(name)}</text>`;
+    return shadowed(36, 48, 9, procTextLengthAttrs(name), escapeSvg(name));
   }
   if (name.length <= 24) {
     const brk = wordBreak(name, Math.ceil(name.length / 2));
     const l1 = name.slice(0, brk).trim();
     const l2 = name.slice(brk).trim();
-    return `<text x="36" y="44" text-anchor="middle" ${font}
-      font-size="8"${procTextLengthAttrs(l1)}>${escapeSvg(l1)}</text>
-    <text x="36" y="54" text-anchor="middle" ${font}
-      font-size="8"${procTextLengthAttrs(l2)}>${escapeSvg(l2)}</text>`;
+    return `${shadowed(36, 44, 8, procTextLengthAttrs(l1), escapeSvg(l1))}
+    ${shadowed(36, 54, 8, procTextLengthAttrs(l2), escapeSvg(l2))}`;
   }
   // 3-line layout for very long names
   const third = Math.ceil(name.length / 3);
@@ -625,12 +638,9 @@ function renderProcessName(name: string, color: string): string {
   const l1 = name.slice(0, brk1).trim();
   const l2 = name.slice(brk1, brk2).trim();
   const l3 = name.slice(brk2).trim();
-  return `<text x="36" y="41" text-anchor="middle" ${font}
-      font-size="7"${procTextLengthAttrs(l1)}>${escapeSvg(l1)}</text>
-    <text x="36" y="50" text-anchor="middle" ${font}
-      font-size="7"${procTextLengthAttrs(l2)}>${escapeSvg(l2)}</text>
-    <text x="36" y="59" text-anchor="middle" ${font}
-      font-size="7"${procTextLengthAttrs(l3)}>${escapeSvg(l3)}</text>`;
+  return `${shadowed(36, 41, 7, procTextLengthAttrs(l1), escapeSvg(l1))}
+    ${shadowed(36, 50, 7, procTextLengthAttrs(l2), escapeSvg(l2))}
+    ${shadowed(36, 59, 7, procTextLengthAttrs(l3), escapeSvg(l3))}`;
 }
 
 const PERCENT_METRICS: Set<MetricId> = new Set([
@@ -678,11 +688,13 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
   if (display.processName != null) {
     const procName = display.processName || "";
     const iconMarkup = display.processIcon
-      ? `<image x="53" y="14" width="12" height="12" href="data:image/png;base64,${display.processIcon}" />`
+      ? `<image x="16" y="28" width="40" height="40" opacity="0.4" href="data:image/png;base64,${display.processIcon}" />`
       : "";
     const nameMarkup = renderProcessName(procName, labelColor);
     return `
     <svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
+
+
       <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
       <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
         font-size="9" font-weight="600" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>
@@ -776,11 +788,10 @@ function normalizeSettings(settings: Settings | undefined): NormalizedSettings {
     typeof settings?.cpuPerCore === "boolean" ? settings.cpuPerCore : mappedMetric === "cpu-core";
   const metric =
     group === "cpu"
-      ? mappedMetric === "cpu-peak" || mappedMetric === "top-cpu"
+      ? (mappedMetric === "cpu-peak" || mappedMetric === "top-cpu" ||
+         mappedMetric === "cpu-core" || mappedMetric === "cpu-total")
         ? mappedMetric
-        : cpuPerCore
-          ? "cpu-core"
-          : "cpu-total"
+        : cpuPerCore ? "cpu-core" : "cpu-total"
       : mappedMetric && METRICS_BY_GROUP[group].includes(mappedMetric)
         ? mappedMetric
         : DEFAULT_METRIC[group];
@@ -796,7 +807,7 @@ function normalizeSettings(settings: Settings | undefined): NormalizedSettings {
     netPeriodSec: toInt(settings?.netPeriodSec, DEFAULT_SETTINGS.netPeriodSec),
     pollIntervalSec: clampPollInterval(toInt(settings?.pollIntervalSec, DEFAULT_SETTINGS.pollIntervalSec)),
     warnThreshold: Math.max(0, Math.min(100, toInt(settings?.warnThreshold, DEFAULT_SETTINGS.warnThreshold))),
-    topThreshold: Math.max(0, Math.min(100, toInt(settings?.topThreshold, DEFAULT_SETTINGS.topThreshold)))
+    topThreshold: Math.max(0, Math.min(metric === "top-disk" ? 10000 : 100, toInt(settings?.topThreshold, DEFAULT_SETTINGS.topThreshold)))
   };
 }
 
@@ -866,6 +877,7 @@ function isMetricId(value: unknown): value is MetricId {
     value === "top-cpu" ||
     value === "top-mem" ||
     value === "top-mem-pct" ||
+    value === "top-disk" ||
     value === "clock"
   );
 }
@@ -991,6 +1003,17 @@ function selectDiskPerf(snapshot: StatsSnapshot, diskId: string): DiskPerf | nul
     if (match) return match;
   }
   return null;
+}
+
+function selectBusiestDiskId(snapshot: StatsSnapshot): string {
+  let bestKey = "";
+  let bestPct = -1;
+  for (const [key, perf] of Object.entries(snapshot.diskPerfById)) {
+    if (key === "_TOTAL") continue;
+    const pct = perf.activePct ?? -1;
+    if (pct > bestPct) { bestPct = pct; bestKey = key; }
+  }
+  return bestKey;
 }
 
 function selectNet(snapshot: StatsSnapshot, iface: string): NetInterfaceSnapshot | null {
@@ -1163,9 +1186,10 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       };
     }
     case "disk-activity": {
-      const perf = selectDiskPerf(snapshot, settings.diskId);
+      const effectiveDiskId = settings.diskId === "" ? selectBusiestDiskId(snapshot) : settings.diskId;
+      const perf = selectDiskPerf(snapshot, effectiveDiskId);
       const activity = perf?.activePct ?? snapshot.diskActivityPct;
-      const disk = selectDisk(snapshot, settings.diskId);
+      const disk = selectDisk(snapshot, effectiveDiskId);
       return {
         label: `${diskShortLabel(disk)} ACTIVE %`,
         value: formatPercent(activity),
@@ -1176,7 +1200,8 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       };
     }
     case "disk-used": {
-      const disk = selectDisk(snapshot, settings.diskId);
+      const effectiveDiskId = settings.diskId === "" ? selectBusiestDiskId(snapshot) : settings.diskId;
+      const disk = selectDisk(snapshot, effectiveDiskId);
       return {
         label: `${diskShortLabel(disk)} % USED`,
         value: formatPercent(disk?.usePct ?? null),
@@ -1187,7 +1212,8 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       };
     }
     case "disk-free": {
-      const disk = selectDisk(snapshot, settings.diskId);
+      const effectiveDiskId = settings.diskId === "" ? selectBusiestDiskId(snapshot) : settings.diskId;
+      const disk = selectDisk(snapshot, effectiveDiskId);
       const freePct = typeof disk?.usePct === "number" ? 100 - disk.usePct : null;
       return {
         label: `${diskShortLabel(disk)} % FREE`,
@@ -1199,9 +1225,10 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       };
     }
     case "disk-read": {
-      const perf = selectDiskPerf(snapshot, settings.diskId);
+      const effectiveDiskId = settings.diskId === "" ? selectBusiestDiskId(snapshot) : settings.diskId;
+      const perf = selectDiskPerf(snapshot, effectiveDiskId);
       const readMB = bytesToMB(perf?.readBps ?? snapshot.diskThroughput.readBps);
-      const disk = selectDisk(snapshot, settings.diskId);
+      const disk = selectDisk(snapshot, effectiveDiskId);
       return {
         label: `${diskShortLabel(disk)} READ`,
         value: formatRateMB(readMB),
@@ -1212,9 +1239,10 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       };
     }
     case "disk-write": {
-      const perf = selectDiskPerf(snapshot, settings.diskId);
+      const effectiveDiskId = settings.diskId === "" ? selectBusiestDiskId(snapshot) : settings.diskId;
+      const perf = selectDiskPerf(snapshot, effectiveDiskId);
       const writeMB = bytesToMB(perf?.writeBps ?? snapshot.diskThroughput.writeBps);
-      const disk = selectDisk(snapshot, settings.diskId);
+      const disk = selectDisk(snapshot, effectiveDiskId);
       return {
         label: `${diskShortLabel(disk)} WRITE`,
         value: formatRateMB(writeMB),
@@ -1318,6 +1346,23 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         processIcon: tp.memIconBase64
       };
     }
+    case "top-disk": {
+      const tp = snapshot.topProcess;
+      const diskMB = bytesToMB(tp.diskBps);
+      if (settings.topThreshold > 0 && (diskMB === null || diskMB < settings.topThreshold)) {
+        return { label: "TOP DISK", value: "IDLE", graphValue: null, graphMax: null, graphMinMax: 10, graphMin: 0, idle: true };
+      }
+      return {
+        label: "TOP DISK",
+        value: formatRateMB(diskMB),
+        graphValue: diskMB,
+        graphMax: null,
+        graphMinMax: 10,
+        graphMin: 0,
+        processName: tp.diskName,
+        processIcon: tp.diskIconBase64
+      };
+    }
     case "clock": {
       const now = new Date();
       return {
@@ -1359,8 +1404,9 @@ function formatDiskSize(bytes: number): string {
 }
 
 function buildDiskItems(snapshot: StatsSnapshot): DataSourceItem[] {
+  const autoItem: DataSourceItem = { label: "Auto (Most Active)", value: "" };
   if (snapshot.disks.length === 0) {
-    return [{ label: "Disk", value: "" }];
+    return [autoItem];
   }
   const items = snapshot.disks.map((disk, index) => {
     const volume = disk.mount || disk.fs || "Disk";
@@ -1374,7 +1420,7 @@ function buildDiskItems(snapshot: StatsSnapshot): DataSourceItem[] {
       value: disk.id
     };
   });
-  return items;
+  return [autoItem, ...items];
 }
 
 function buildNetItems(snapshot: StatsSnapshot): DataSourceItem[] {
@@ -1699,6 +1745,13 @@ export class BaseMetricAction extends SingletonAction<Settings> {
     if (diskSpaceMetric && typeof display.graphValue === "number" && Number.isFinite(display.graphValue)) {
       state.diskSpaceWarmupComplete = true;
     }
+    if (state.settings.diskId === "" && state.settings.group === "disk" && state.settings.metric !== "top-disk") {
+      const effectiveId = selectBusiestDiskId(snapshot);
+      if (state.lastEffectiveDiskId && effectiveId && state.lastEffectiveDiskId !== effectiveId) {
+        state.history.clear();
+      }
+      state.lastEffectiveDiskId = effectiveId;
+    }
     state.history.push(display.graphValue);
     saveHistoryToCache(state, actionInstance.id);
     const showDebug = ALWAYS_DEBUG;
@@ -1751,6 +1804,7 @@ export class BaseMetricAction extends SingletonAction<Settings> {
       if (state.settings.group === "disk") {
         const disk = selectDisk(snapshot, state.settings.diskId);
         const perf = selectDiskPerf(snapshot, state.settings.diskId);
+        const tp = snapshot.topProcess;
         writeDebugLog("diskSnapshot", {
           actionId: actionInstance.id,
           manifestId: actionInstance.manifestId,
@@ -1761,7 +1815,8 @@ export class BaseMetricAction extends SingletonAction<Settings> {
           perfKeys: Object.keys(snapshot.diskPerfById || {}),
           perf,
           totalActivityPct: snapshot.diskActivityPct,
-          totalThroughput: snapshot.diskThroughput
+          totalThroughput: snapshot.diskThroughput,
+          topDisk: { name: tp.diskName, bps: tp.diskBps, hasIcon: tp.diskIconBase64 != null }
         });
       }
       state.debugLogRemaining -= 1;

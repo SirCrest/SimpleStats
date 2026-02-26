@@ -58,6 +58,7 @@ Disk
 - % Free (select drive)
 - Read throughput (MB/s)
 - Write throughput (MB/s)
+- Top process (I/O MB/s)
 
 Network
 - Upload rate (Mbps, per interface or total)
@@ -230,7 +231,34 @@ The full proposal should also include:
 
 - Network totals during long Stream Deck downtime: investigate OS-level usage history or an optional background helper/service.
 
-## Recent Changes (2026-02-22)
+## Recent Changes (2026-02-24) — v0.10.3.0
+
+- Always-on background graph history: graph data now kept alive for 8 hours instead of 60 seconds after a key leaves the screen
+- Returning to any stats page after a long absence now shows a fully populated graph instead of resetting to zero
+- `SimpleStatsHelper.exe` stays running during extended off-screen periods, eliminating cold-start delays on return
+
+## Changes (2026-02-24) — v0.10.2.1
+
+- Top-process keys (TOP CPU, TOP MEM, TOP DISK, GPU TOP COMPUTE): process icon now displayed as large 40×40 faded background watermark (40% opacity) centered behind the process name
+- Process icon extraction bumped from 24×24 to 48×48 for sharper rendering at display size
+- Process name text now rendered with a black outline (4-copy offset technique) for legibility over the icon background
+
+## Changes (2026-02-24) — v0.10.2.0
+
+- Removed redundant Per-Core checkbox from CPU property inspector; metric dropdown now directly controls core stepper visibility
+- Fixed `normalizeSettings()`: explicit `cpu-core`/`cpu-total` metric values no longer silently overridden by `cpuPerCore` flag
+- Fixed disk/GPU/network dropdowns snapping to first item after rescan — selection now preserved from current settings
+- Fixed `populateSelect` to explicitly set `""` (Auto) value so Auto selection is driven by value, not browser default
+
+## Changes (2026-02-24)
+
+- Added "Top Process (I/O)" metric to Disk action: shows process icon, name, and MB/s for the highest disk I/O process
+- Added "Auto (Most Active)" disk selection option — all disk metrics can now auto-select the busiest drive
+- Idle threshold for top-disk: hides display when top process is below a configurable MB/s floor
+- Fixed CPU % summing to aggregate across same-named processes (matches Task Manager multi-instance behavior)
+- Added top-disk process data (name, bps, hasIcon) to disk debug snapshot log
+
+## Changes (2026-02-22)
 
 - Refactored single "Metric Display" action into 6 per-device actions (CPU, GPU, Memory, Disk, Network, System)
 - Removed device dropdown — each action is fixed to its device group

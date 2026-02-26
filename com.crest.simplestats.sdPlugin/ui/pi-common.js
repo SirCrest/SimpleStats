@@ -42,7 +42,7 @@ function populateSelect(selectEl, items, currentValue) {
     opt.textContent = item.label;
     selectEl.appendChild(opt);
   }
-  if (currentValue !== undefined && currentValue !== null && currentValue !== "") {
+  if (currentValue !== undefined && currentValue !== null) {
     selectEl.value = currentValue;
   }
 }
@@ -72,15 +72,15 @@ if (streamDeckClient.onDidReceivePluginMessage) {
     logTiming(`onDidReceivePluginMessage: event=${payload.event}, items=${payload.items?.length ?? 0}`);
     if (payload.event === "getGpus" && payload.items) {
       deviceCache.gpus = payload.items;
-      populateSelect(document.getElementById("gpu"), payload.items);
+      populateSelect(document.getElementById("gpu"), payload.items, currentSettings?.gpuIndex ?? "");
     }
     if (payload.event === "getDisks" && payload.items) {
       deviceCache.disks = payload.items;
-      populateSelect(document.getElementById("disk"), payload.items);
+      populateSelect(document.getElementById("disk"), payload.items, currentSettings?.diskId ?? "");
     }
     if (payload.event === "getNetIfaces" && payload.items) {
       deviceCache.netIfaces = payload.items;
-      populateSelect(document.getElementById("net"), payload.items);
+      populateSelect(document.getElementById("net"), payload.items, currentSettings?.netIface ?? "");
     }
   });
 }
@@ -92,7 +92,7 @@ const PERCENT_METRICS = new Set([
 ]);
 
 const TOP_PROCESS_METRICS = new Set([
-  "top-cpu", "gpu-top-compute", "top-mem", "top-mem-pct"
+  "top-cpu", "gpu-top-compute", "top-mem", "top-mem-pct", "top-disk"
 ]);
 
 // ─── Settings helpers ────────────────────────────────────────────────────
@@ -306,7 +306,8 @@ async function handleTopThresholdChange(event) {
   const topThresholdEl = document.getElementById("top-threshold");
   const raw = readValueFromEvent(event, topThresholdEl ? topThresholdEl.value : "");
   const val = parseInt(raw, 10);
-  const next = Number.isFinite(val) && val > 0 ? Math.min(100, val) : 0;
+  const max = currentSettings.metric === "top-disk" ? 10000 : 100;
+  const next = Number.isFinite(val) && val > 0 ? Math.min(max, val) : 0;
   await setSettings({ topThreshold: next });
 }
 

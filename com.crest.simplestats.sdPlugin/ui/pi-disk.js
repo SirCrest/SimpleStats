@@ -1,12 +1,13 @@
 (() => {
-  const { initPI, setSettings, setVisible, wirePlainListener, PERCENT_METRICS } = window.piCommon;
+  const { initPI, setSettings, setVisible, wirePlainListener, PERCENT_METRICS, TOP_PROCESS_METRICS } = window.piCommon;
 
   const METRICS = [
     { value: "disk-activity", label: "Utilization (Active)" },
     { value: "disk-used", label: "% Used" },
     { value: "disk-free", label: "% Free" },
     { value: "disk-read", label: "Read Throughput" },
-    { value: "disk-write", label: "Write Throughput" }
+    { value: "disk-write", label: "Write Throughput" },
+    { value: "top-disk", label: "Top Process (I/O)" }
   ];
 
   const DEFAULT_METRIC = "disk-activity";
@@ -19,13 +20,17 @@
   }
 
   function updateVisibility(metric) {
+    const isTopDisk = metric === "top-disk";
     const isDiskSpace = metric === "disk-used" || metric === "disk-free";
-    setVisible(document.getElementById("disk-row"), true);
+    setVisible(document.getElementById("disk-row"), !isTopDisk);
     setVisible(document.getElementById("disk-space-note"), isDiskSpace);
-    setVisible(document.getElementById("poll-row"), !isDiskSpace);
+    setVisible(document.getElementById("poll-row"), !isDiskSpace && !isTopDisk);
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);
     setVisible(document.getElementById("threshold-note"), isPercent);
+    const isTopProcess = TOP_PROCESS_METRICS.has(metric);
+    setVisible(document.getElementById("top-threshold-row"), isTopProcess);
+    setVisible(document.getElementById("top-threshold-note"), isTopProcess);
   }
 
   async function handleDiskChange(event) {

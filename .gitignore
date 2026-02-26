@@ -18,3 +18,7 @@ dist/
 SimpleStats/
 nul
 .DS_Store
+
+npm-debug.log
+test-icon-*
+.size-probe/
