@@ -1,5 +1,13 @@
 # Release Notes
 
+## v0.10.3.1
+
+### Bug fixes
+- Fixed subscription leak when rapidly switching Stream Deck pages. Repeated `willAppear` events without a matching `willDisappear` now clean up the previous poller subscription, preventing duplicate renders and growing resource usage over time.
+
+### Improvements
+- Graph data now right-aligned: newest data point is always at the right edge, and the line grows from the left as history fills in.
+
 ## v0.10.1.1
 
 Per-device actions refactor, network transfer fixes, and label improvements.

@@ -1,0 +1,86 @@
+# Change History
+
+## v0.10.3.1 (2026-02-27)
+
+- Fixed subscription leak when rapidly switching Stream Deck pages — repeated `willAppear` without `willDisappear` no longer leaks poller subscriptions
+- Graph data now right-aligned: newest point always at right edge, line grows from left as history fills
+
+## v0.10.3.0 (2026-02-24)
+
+- Always-on background graph history: graph data now kept alive for 8 hours instead of 60 seconds after a key leaves the screen
+- Returning to any stats page after a long absence now shows a fully populated graph instead of resetting to zero
+- `SimpleStatsHelper.exe` stays running during extended off-screen periods, eliminating cold-start delays on return
+
+## v0.10.2.1 (2026-02-24)
+
+- Top-process keys (TOP CPU, TOP MEM, TOP DISK, GPU TOP COMPUTE): process icon now displayed as large 40×40 faded background watermark (40% opacity) centered behind the process name
+- Process icon extraction bumped from 24×24 to 48×48 for sharper rendering at display size
+- Process name text now rendered with a black outline (4-copy offset technique) for legibility over the icon background
+
+## v0.10.2.0 (2026-02-24)
+
+- Removed redundant Per-Core checkbox from CPU property inspector; metric dropdown now directly controls core stepper visibility
+- Fixed `normalizeSettings()`: explicit `cpu-core`/`cpu-total` metric values no longer silently overridden by `cpuPerCore` flag
+- Fixed disk/GPU/network dropdowns snapping to first item after rescan — selection now preserved from current settings
+- Fixed `populateSelect` to explicitly set `""` (Auto) value so Auto selection is driven by value, not browser default
+- Added "Top Process (I/O)" metric to Disk action: shows process icon, name, and MB/s for the highest disk I/O process
+- Added "Auto (Most Active)" disk selection option — all disk metrics can now auto-select the busiest drive
+- Idle threshold for top-disk: hides display when top process is below a configurable MB/s floor
+- Fixed CPU % summing to aggregate across same-named processes (matches Task Manager multi-instance behavior)
+- Added top-disk process data (name, bps, hasIcon) to disk debug snapshot log
+
+## v0.10.1.1 (2026-02-22)
+
+- Refactored single "Metric Display" action into 6 per-device actions (CPU, GPU, Memory, Disk, Network, System)
+- Removed device dropdown — each action is fixed to its device group
+- Extracted BaseMetricAction base class with rendering engine; 6 thin subclasses override getDeviceGroup()
+- Created 6 per-device property inspectors (HTML + JS) sharing pi-common.js module
+- Generated color-themed action icons per device using GROUP_STYLE colors
+- Removed all legacy action classes and backward-compatibility code
+- Fixed network total transfer (1H/24H) showing less than 60s after PC reboot
+- Renamed network transfer period label from `NET 1M` to `NET 60S`
+
+## v0.9.4.1 (2026-02-21)
+
+- Fixed network total transfer (1H/24H) showing dramatically less than 60s value after a PC reboot. Counter resets at reboot boundaries are now skipped instead of causing a fallback to only 60 seconds of data.
+
+## v0.9.4.0
+
+- Improved icon extraction fallback using QueryFullProcessImageName for processes where MainModule access is restricted
+- Graph fill now uses a vertical gradient (brighter near the line, fading toward the baseline) for added depth
+- GPU temperature now displays with degree symbol (e.g., 72°C instead of 72C)
+- Network upload/download labels now include SVG arrow indicators (NET ↑ UP / NET ↓ DOWN)
+- Network metric dropdown now defaults to Download Rate first
+- GB values (MEM USED, VRAM) now show one decimal place under 100GB
+- Unit suffixes (%, GB, Mbps, etc.) now render at a smaller font size than the numeric value
+- Top-process keys now use a fixed 13pt value font for consistent icon alignment
+- Process icon refined: smaller size and vertically centered with the value text
+- Graph edges now fade to transparent with an ease-out curve
+- Graph area extended nearly edge-to-edge for a wider, more immersive look
+
+## v0.9.3.0 (2026-02-06)
+
+- Removed gpu-top-vram metric (not feasible on Windows NVML)
+- Added top-mem-pct metric (% of total RAM used by top process)
+- Added process icon extraction to .NET helper (System.Drawing.Common)
+- Redesigned top-process keys: icon + separate value/name layout, no graph
+- GPU metrics now include power (W) and top compute process (%)
+
+## v0.9.0.0 (2026-02-03)
+
+- Refactored to a single configurable action with per-key settings
+- Added property inspector using sdpi-components and device selectors
+- Added per-core CPU, GPU VRAM, disk throughput, and network transfer windows
+- Added per-key polling interval (1-5 seconds) and a Clock metric for validation
+- Persisted network total history locally to survive Stream Deck restarts
+- Matched disk utilization to Task Manager active time (per-drive when available)
+- Added CPU per-core stepper with max thread cap from the system
+- Added PI footnotes for total transfer tracking and disk space cadence
+- Replaced ASCII sparklines with colored SVG graphs (smoothed line, 1px stroke, dim fill, left-aligned labels)
+- Added graph scaling rules (fixed percent scales, VRAM/MEM use total GB, GPU temp 20-100C, net min scale)
+- Updated labels/units (CPU TOTAL, GPU TEMP, NET UP/DOWN, disk labels with drive letters, MB/s, Mbps, 24H)
+- Clamped disk activity to 0-100% and aligned disk metrics to Task Manager
+- Added background history continuation across page switches (60s TTL)
+- Added .NET helper for fast Windows CPU/Disk/Network sampling (no per-tick PowerShell)
+- Switched polling to async per-group cadence so slow sources don't block ticks
+- Added process CPU/memory usage to perf logs for real CPU impact

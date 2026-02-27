@@ -391,6 +391,10 @@ class HistorySeries {
     return this.values.length > 0 ? this.values[this.values.length - 1] : null;
   }
 
+  getMaxPoints(): number {
+    return this.maxPoints;
+  }
+
   setValues(values: Array<number | null>): void {
     this.values = values
       .map((value) => (typeof value === "number" && Number.isFinite(value) ? Math.max(0, value) : null))
@@ -511,6 +515,7 @@ function escapeSvg(value: string): string {
 
 function computeGraphPaths(
   values: Array<number | null>,
+  maxPoints: number,
   fixedMax?: number | null,
   minMax?: number | null,
   fixedMin?: number | null
@@ -538,7 +543,8 @@ function computeGraphPaths(
   }
   const graphWidth = GRAPH_RIGHT - GRAPH_LEFT;
   const graphHeight = GRAPH_BOTTOM - GRAPH_TOP;
-  const step = plotValues.length > 1 ? graphWidth / (plotValues.length - 1) : 0;
+  const n = plotValues.length;
+  const step = maxPoints > 1 ? graphWidth / (maxPoints - 1) : 0;
 
   if (!Number.isFinite(max) || max <= min) {
     const baseline = `M${GRAPH_LEFT} ${GRAPH_BOTTOM} L${GRAPH_RIGHT} ${GRAPH_BOTTOM}`;
@@ -547,7 +553,7 @@ function computeGraphPaths(
 
   const points = smoothed.map((value, index) => {
     const clamped = Math.min(Math.max(value, min), max);
-    const x = GRAPH_LEFT + step * index;
+    const x = GRAPH_RIGHT - (n - 1 - index) * step;
     const y = GRAPH_BOTTOM - ((clamped - min) / (max - min)) * graphHeight;
     return { x, y };
   });
@@ -723,7 +729,7 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
   const fillColor = baseStyle.fill;
 
   const values = history.getValues();
-  const graph = computeGraphPaths(values, display.graphMax, display.graphMinMax, display.graphMin);
+  const graph = computeGraphPaths(values, history.getMaxPoints(), display.graphMax, display.graphMinMax, display.graphMin);
 
   const fadeL = GRAPH_LEFT;
   const fadeR = GRAPH_RIGHT;
@@ -1473,6 +1479,7 @@ export class BaseMetricAction extends SingletonAction<Settings> {
     });
     writeDebugLog("willAppear", { actionId: action.id, manifestId: action.manifestId, settings: state.settings });
     statsPoller.setInterest(action.id, state.settings.group);
+    if (state.unsubscribe) state.unsubscribe();
     state.unsubscribe = statsPoller.subscribe((snapshot) => {
       this.updateAction(action, state, snapshot);
     });
