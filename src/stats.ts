@@ -145,16 +145,33 @@ const perfLogPaths = (() => {
   const pluginDir = path.resolve(__dirname, "..");
   return [path.join(pluginDir, "debug.log")];
 })();
+const perfHistoryLogPaths = (() => perfLogPaths.map((candidate) => path.join(path.dirname(candidate), "perf.log")))();
 let activePerfLogPath: string | null = null;
+let activePerfHistoryLogPath: string | null = null;
 let perfLogQueue: string[] = [];
 let perfLogDroppedLines = 0;
 let perfLogFlushTimer: ReturnType<typeof setTimeout> | null = null;
 let perfLogFlushInProgress = false;
+let perfHistoryLogRotateAt = 0;
 
 function rotatePerfLogIfNeeded(candidate: string): void {
   const now = Date.now();
   if (now - perfLogRotateAt < PERF_LOG_ROTATE_CHECK_MS) return;
   perfLogRotateAt = now;
+  try {
+    if (!fs.existsSync(candidate)) return;
+    const stats = fs.statSync(candidate);
+    if (stats.size < PERF_LOG_ROTATE_BYTES) return;
+    fs.truncateSync(candidate, 0);
+  } catch {
+    // Ignore rotation errors.
+  }
+}
+
+function rotatePerfHistoryLogIfNeeded(candidate: string): void {
+  const now = Date.now();
+  if (now - perfHistoryLogRotateAt < PERF_LOG_ROTATE_CHECK_MS) return;
+  perfHistoryLogRotateAt = now;
   try {
     if (!fs.existsSync(candidate)) return;
     const stats = fs.statSync(candidate);
@@ -235,6 +252,33 @@ function writePerfLog(message: string, data?: unknown): void {
   }
 }
 
+function writePerfHistoryLog(entry: {
+  t: string;
+  tickAvgMs: number;
+  tickMaxMs: number;
+  cpuPct: number | null;
+  heapMb: number;
+}): void {
+  try {
+    const line = `${JSON.stringify(entry)}\n`;
+    const candidates = activePerfHistoryLogPath ? [activePerfHistoryLogPath] : perfHistoryLogPaths;
+    for (const candidate of candidates) {
+      try {
+        const dir = path.dirname(candidate);
+        fs.mkdirSync(dir, { recursive: true });
+        rotatePerfHistoryLogIfNeeded(candidate);
+        fs.appendFileSync(candidate, line, "utf8");
+        activePerfHistoryLogPath = candidate;
+        break;
+      } catch {
+        // Try the next path.
+      }
+    }
+  } catch {
+    // Swallow logging errors to avoid impacting the plugin.
+  }
+}
+
 type TransferCascade = {
   secondDeltas: Array<{ t: number; rx: number; tx: number }>;
   currentMinute: { epoch: number; rx: number; tx: number };
@@ -277,7 +321,9 @@ async function writeCascadePersisted(payload: CascadePersisted): Promise<boolean
     try {
       const dir = path.dirname(candidate);
       await fs.promises.mkdir(dir, { recursive: true });
-      await fs.promises.writeFile(candidate, text, "utf8");
+      const tmp = candidate + ".tmp";
+      await fs.promises.writeFile(tmp, text, "utf8");
+      await fs.promises.rename(tmp, candidate);
       activeNetHistoryPath = candidate;
       return true;
     } catch {
@@ -363,6 +409,12 @@ type FsSizeSample = {
 };
 type WindowsDiskPerf = { total: DiskPerf; byId: Record<string, DiskPerf> };
 type PerfAggregate = { count: number; totalMs: number; maxMs: number; lastMs: number };
+export type PerfSummarySnapshot = {
+  tickAvgMs: number;
+  tickMaxMs: number;
+  cpuPct: number | null;
+  heapMb: number;
+};
 type MetricGroup = "cpu" | "gpu" | "memory" | "disk" | "network" | "system";
 type RefreshOptions = {
   forceGroups?: MetricGroup[];   // Bypass cache and fetch fresh data
@@ -1061,9 +1113,12 @@ class StatsPoller {
   private netHistoryWritePending = false;
   private netHistoryWriteTimer: NodeJS.Timeout | undefined;
   private readonly perfStats = new Map<string, PerfAggregate>();
+  private readonly recentTickMs: number[] = [];
+  private static readonly ROLLING_TICK_WINDOW = 60;
   private perfLastLogAt = 0;
   private perfProcessLastAt = 0;
   private perfProcessLastCpu: NodeJS.CpuUsage | null = null;
+  private perfProcessSnapshot: { cpuPct: number | null; heapMb: number } | null = null;
   private cpuMemAt = 0;
   private cpuMemInFlight: Promise<void> | null = null;
   private gpuPollInFlight: Promise<void> | null = null;
@@ -1122,6 +1177,26 @@ class StatsPoller {
 
   getSnapshot(): StatsSnapshot {
     return this.snapshot;
+  }
+
+  getPerfSummary(): PerfSummarySnapshot {
+    const recent = this.recentTickMs;
+    let avgMs = 0;
+    let maxMs = 0;
+    if (recent.length > 0) {
+      let sum = 0;
+      for (const ms of recent) {
+        sum += ms;
+        if (ms > maxMs) maxMs = ms;
+      }
+      avgMs = sum / recent.length;
+    }
+    return {
+      tickAvgMs: Math.round(avgMs * 10) / 10,
+      tickMaxMs: Math.round(maxMs * 10) / 10,
+      cpuPct: this.perfProcessSnapshot?.cpuPct ?? null,
+      heapMb: this.perfProcessSnapshot?.heapMb ?? 0
+    };
   }
 
   setInterest(actionId: string, group: string): void {
@@ -2260,6 +2335,12 @@ class StatsPoller {
       entry.maxMs = elapsedMs;
     }
     this.perfStats.set(label, entry);
+    if (label === "tick") {
+      this.recentTickMs.push(elapsedMs);
+      if (this.recentTickMs.length > StatsPoller.ROLLING_TICK_WINDOW) {
+        this.recentTickMs.shift();
+      }
+    }
   }
 
   private maybeLogPerf(tickMs: number): void {
@@ -2280,6 +2361,15 @@ class StatsPoller {
     }
 
     const processStats = this.sampleProcessUsage(now);
+    this.perfProcessSnapshot = { cpuPct: processStats.cpuPct, heapMb: processStats.heapMb };
+    const perfSummary = this.getPerfSummary();
+    writePerfHistoryLog({
+      t: new Date(now).toISOString(),
+      tickAvgMs: perfSummary.tickAvgMs,
+      tickMaxMs: perfSummary.tickMaxMs,
+      cpuPct: perfSummary.cpuPct,
+      heapMb: perfSummary.heapMb
+    });
     writePerfLog("perfSummary", {
       reason: slow ? "slowTick" : "interval",
       tickMs: Math.round(tickMs * 10) / 10,

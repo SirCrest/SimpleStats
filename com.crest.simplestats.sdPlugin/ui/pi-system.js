@@ -1,12 +1,17 @@
 (() => {
   const { initPI, setVisible } = window.piCommon;
 
-  const METRICS = [{ value: "clock", label: "Clock (HH:MM:SS)" }];
+  const METRICS = [
+    { value: "clock", label: "Clock (HH:MM:SS)" },
+    { value: "perf", label: "Performance" }
+  ];
 
   const DEFAULT_METRIC = "clock";
 
-  function normalizeSettings() {
-    return { metric: DEFAULT_METRIC };
+  function normalizeSettings(settings) {
+    const candidate = settings?.metric;
+    const metric = METRICS.some((item) => item.value === candidate) ? candidate : DEFAULT_METRIC;
+    return { metric };
   }
 
   function updateVisibility() {

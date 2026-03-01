@@ -16,6 +16,7 @@ import {
   type DiskSnapshot,
   type GpuSnapshot,
   type NetInterfaceSnapshot,
+  type PerfSummarySnapshot,
   type StatsSnapshot
 } from "../stats";
 
@@ -160,7 +161,8 @@ export type MetricId =
   | "top-mem"
   | "top-mem-pct"
   | "top-disk"
-  | "clock";
+  | "clock"
+  | "perf";
 
 export type Settings = {
   group?: MetricGroup;
@@ -205,6 +207,7 @@ type ActionState = {
   lastRenderAt?: number;
   diskSpaceWarmupComplete?: boolean;
   lastEffectiveDiskId?: string;
+  diskHistories?: Map<string, HistorySeries>;
 };
 
 type MetricDisplay = {
@@ -217,6 +220,7 @@ type MetricDisplay = {
   processName?: string | null;
   processIcon?: string | null;
   labelArrow?: string | null;
+  perfSummary?: PerfSummarySnapshot | null;
   idle?: boolean;
 };
 
@@ -252,6 +256,7 @@ type BackgroundState = {
   bgId: string;
   cacheKey: string;
   lastEffectiveDiskId?: string;
+  diskHistories?: Map<string, HistorySeries>;
 };
 
 const backgroundStates = new Map<string, BackgroundState>();
@@ -263,7 +268,7 @@ const METRICS_BY_GROUP: Record<MetricGroup, MetricId[]> = {
   memory: ["mem-total", "mem-used", "top-mem", "top-mem-pct"],
   disk: ["disk-activity", "disk-used", "disk-free", "disk-read", "disk-write", "top-disk"],
   network: ["net-down", "net-up", "net-total"],
-  system: ["clock"]
+  system: ["clock", "perf"]
 };
 
 const DEFAULT_METRIC: Record<MetricGroup, MetricId> = {
@@ -417,6 +422,73 @@ function isDiskSpaceMetric(settings: NormalizedSettings): boolean {
   return settings.group === "disk" && (settings.metric === "disk-used" || settings.metric === "disk-free");
 }
 
+function diskGraphValue(snapshot: StatsSnapshot, metric: MetricId, diskId: string): number | null {
+  switch (metric) {
+    case "disk-activity": {
+      const perf = selectDiskPerf(snapshot, diskId);
+      return perf?.activePct ?? null;
+    }
+    case "disk-used": {
+      const disk = selectDisk(snapshot, diskId);
+      return disk?.usePct ?? null;
+    }
+    case "disk-free": {
+      const disk = selectDisk(snapshot, diskId);
+      return typeof disk?.usePct === "number" ? 100 - disk.usePct : null;
+    }
+    case "disk-read": {
+      const perf = selectDiskPerf(snapshot, diskId);
+      return bytesToMB(perf?.readBps ?? null);
+    }
+    case "disk-write": {
+      const perf = selectDiskPerf(snapshot, diskId);
+      return bytesToMB(perf?.writeBps ?? null);
+    }
+    default:
+      return null;
+  }
+}
+
+function swapDiskHistoryIfNeeded(
+  state: { history: HistorySeries; lastEffectiveDiskId?: string; diskHistories?: Map<string, HistorySeries> },
+  settings: NormalizedSettings,
+  snapshot: StatsSnapshot
+): void {
+  if (settings.diskId !== "" || settings.group !== "disk" || settings.metric === "top-disk") return;
+  const effectiveId = selectBusiestDiskId(snapshot);
+  if (!effectiveId) return;
+  if (!state.diskHistories) state.diskHistories = new Map();
+
+  // Ensure all known disks have a history series
+  const maxPts = state.history.getMaxPoints();
+  for (const key of Object.keys(snapshot.diskPerfById)) {
+    if (key === "_TOTAL") continue;
+    if (!state.diskHistories.has(key)) {
+      state.diskHistories.set(key, key === (state.lastEffectiveDiskId || effectiveId) ? state.history : new HistorySeries(maxPts));
+    }
+  }
+
+  // Push current metric value to all inactive disk histories
+  for (const [diskId, series] of state.diskHistories) {
+    if (diskId === effectiveId) continue; // active disk is pushed by the caller
+    series.push(diskGraphValue(snapshot, settings.metric, diskId));
+  }
+
+  // Swap active history if the busiest disk changed
+  if (state.lastEffectiveDiskId && effectiveId !== state.lastEffectiveDiskId) {
+    state.diskHistories.set(state.lastEffectiveDiskId, state.history);
+    const existing = state.diskHistories.get(effectiveId);
+    if (existing) {
+      state.history = existing;
+    } else {
+      state.history = new HistorySeries(maxPts);
+      state.diskHistories.set(effectiveId, state.history);
+    }
+  }
+
+  state.lastEffectiveDiskId = effectiveId;
+}
+
 function historyCacheBaseKey(action: KeyAction<Settings>): string {
   const coords = action.coordinates ? `${action.coordinates.row},${action.coordinates.column}` : "na";
   const manifest = action.manifestId ?? "unknown";
@@ -474,13 +546,7 @@ function updateBackgroundState(state: BackgroundState, snapshot: StatsSnapshot, 
   state.lastRenderAt = now;
   state.history.setMaxPoints(historyPointsForInterval(intervalMs / 1000));
   const display = buildMetricDisplay(snapshot, state.settings);
-  if (state.settings.diskId === "" && state.settings.group === "disk" && state.settings.metric !== "top-disk") {
-    const effectiveId = selectBusiestDiskId(snapshot);
-    if (state.lastEffectiveDiskId && effectiveId && state.lastEffectiveDiskId !== effectiveId) {
-      state.history.clear();
-    }
-    state.lastEffectiveDiskId = effectiveId;
-  }
+  swapDiskHistoryIfNeeded(state, state.settings, snapshot);
   state.history.push(display.graphValue);
   historyCache.set(state.cacheKey, {
     values: state.history.getValues(),
@@ -712,6 +778,41 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
     `.trim();
   }
 
+  if (display.perfSummary) {
+    const perf = display.perfSummary;
+    const cpuPct = perf.cpuPct;
+    const cpuReady = cpuPct !== null && Number.isFinite(cpuPct);
+    const avgValue = `${perf.tickAvgMs.toFixed(1)}ms`;
+    const maxValue = `${perf.tickMaxMs.toFixed(1)}ms`;
+    const cpuValue = cpuReady ? `${cpuPct.toFixed(1)}%` : "--";
+    const memValue = cpuReady ? `${Math.round(perf.heapMb)}MB` : "--";
+    const rowLabelColor = baseStyle.value;
+    const rowValueColor = baseStyle.value;
+    return `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${KEY_SIZE}" height="${KEY_SIZE}" viewBox="0 0 ${KEY_SIZE} ${KEY_SIZE}">
+      <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
+      <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" font-weight="600" fill="${labelColor}">PERF</text>
+      <text x="${TEXT_LEFT}" y="24" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" fill="${rowLabelColor}" opacity="0.4">AVG</text>
+      <text x="68" y="24" text-anchor="end" font-family="Segoe UI, Arial, sans-serif"
+        font-size="10" font-weight="700" fill="${rowValueColor}">${escapeSvg(avgValue)}</text>
+      <text x="${TEXT_LEFT}" y="36" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" fill="${rowLabelColor}" opacity="0.4">MAX</text>
+      <text x="68" y="36" text-anchor="end" font-family="Segoe UI, Arial, sans-serif"
+        font-size="10" font-weight="700" fill="${rowValueColor}">${escapeSvg(maxValue)}</text>
+      <text x="${TEXT_LEFT}" y="48" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" fill="${rowLabelColor}" opacity="0.4">CPU</text>
+      <text x="68" y="48" text-anchor="end" font-family="Segoe UI, Arial, sans-serif"
+        font-size="10" font-weight="700" fill="${rowValueColor}">${escapeSvg(cpuValue)}</text>
+      <text x="${TEXT_LEFT}" y="60" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+        font-size="9" fill="${rowLabelColor}" opacity="0.4">MEM</text>
+      <text x="68" y="60" text-anchor="end" font-family="Segoe UI, Arial, sans-serif"
+        font-size="10" font-weight="700" fill="${rowValueColor}">${escapeSvg(memValue)}</text>
+    </svg>
+    `.trim();
+  }
+
   // No-graph layout: label + value only (e.g. net-total)
   if (display.graphValue === null && !history.getValues().some((v) => v !== null)) {
     return `
@@ -884,7 +985,8 @@ function isMetricId(value: unknown): value is MetricId {
     value === "top-mem" ||
     value === "top-mem-pct" ||
     value === "top-disk" ||
-    value === "clock"
+    value === "clock" ||
+    value === "perf"
   );
 }
 
@@ -1380,6 +1482,18 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         graphMin: null
       };
     }
+    case "perf": {
+      const perf = statsPoller.getPerfSummary();
+      return {
+        label: "PERF",
+        value: "",
+        graphValue: null,
+        graphMax: null,
+        graphMinMax: null,
+        graphMin: null,
+        perfSummary: perf
+      };
+    }
     default:
       return {
         label: "STAT",
@@ -1668,6 +1782,7 @@ export class BaseMetricAction extends SingletonAction<Settings> {
     if (existing.settingsKey !== nextKey) {
       existing.settings = normalized;
       existing.settingsKey = nextKey;
+      existing.diskHistories = undefined;
       const nextCacheKey = historyCacheKey(existing.cacheKeyBase, nextKey);
       const background = backgroundStates.get(nextCacheKey) ?? null;
       if (background) {
@@ -1752,13 +1867,7 @@ export class BaseMetricAction extends SingletonAction<Settings> {
     if (diskSpaceMetric && typeof display.graphValue === "number" && Number.isFinite(display.graphValue)) {
       state.diskSpaceWarmupComplete = true;
     }
-    if (state.settings.diskId === "" && state.settings.group === "disk" && state.settings.metric !== "top-disk") {
-      const effectiveId = selectBusiestDiskId(snapshot);
-      if (state.lastEffectiveDiskId && effectiveId && state.lastEffectiveDiskId !== effectiveId) {
-        state.history.clear();
-      }
-      state.lastEffectiveDiskId = effectiveId;
-    }
+    swapDiskHistoryIfNeeded(state, state.settings, snapshot);
     state.history.push(display.graphValue);
     saveHistoryToCache(state, actionInstance.id);
     const showDebug = ALWAYS_DEBUG;

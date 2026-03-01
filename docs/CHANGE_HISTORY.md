@@ -1,5 +1,17 @@
 # Change History
 
+## v0.10.4.0 (2026-02-28)
+
+- Per-disk graph history for Auto (Most Active): each disk retains its own graph history independently; switching drives no longer clears the graph, and inactive disks accumulate data in the background
+- Added Performance metric to System action — displays rolling 60s tick AVG/MAX, Node.js CPU%, and heap MB on the key
+- Added `perf.log` structured history file (NDJSON, one entry per 30s interval) for post-hoc performance analysis
+- Performance key uses 60-second rolling window for AVG and MAX instead of lifetime aggregates, so startup spikes don't dominate
+- Cached `NetworkInterface.GetAllNetworkInterfaces()` in .NET helper — adapter enumeration now runs every 60s instead of every tick, reducing kernel CPU overhead (~50% of helper CPU)
+- Added `rescan_interfaces` stdin command to .NET helper for on-demand network adapter re-enumeration
+- Graph crawl-from-right: new keys start empty and fill from the right edge like Windows Task Manager, instead of stretching sparse data across the full width
+- Atomic network history write: `net-history.json` is now written to a `.tmp` file first, then renamed over the real file, preventing corruption if the process crashes mid-write
+- Reduced GC pressure in .NET helper: `TopProcessSampler` and `MomentumHelper` now reuse dictionaries across ticks instead of allocating new ones each sample
+
 ## v0.10.3.1 (2026-02-27)
 
 - Fixed subscription leak when rapidly switching Stream Deck pages — repeated `willAppear` without `willDisappear` no longer leaks poller subscriptions

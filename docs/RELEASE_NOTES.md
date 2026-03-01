@@ -1,12 +1,18 @@
 # Release Notes
 
-## v0.10.3.1
+## v0.10.4.0
 
-### Bug fixes
-- Fixed subscription leak when rapidly switching Stream Deck pages. Repeated `willAppear` events without a matching `willDisappear` now clean up the previous poller subscription, preventing duplicate renders and growing resource usage over time.
+### New features
+- **Performance metric** for the System action: select "Performance" in the metric dropdown to see plugin health at a glance — rolling 60-second tick AVG/MAX latency, Node.js CPU%, and heap memory usage, all rendered on a single key.
+- **`perf.log` structured history**: a newline-delimited JSON file written every 30 seconds capturing tick latency, CPU%, and heap MB for post-hoc performance analysis. Located in the plugin bin folder alongside `debug.log`.
 
 ### Improvements
-- Graph data now right-aligned: newest data point is always at the right edge, and the line grows from the left as history fills in.
+- **Per-disk graph history for Auto (Most Active)**: when auto-disk switches between drives, each disk now retains its own independent graph history. Switching back to a previously-active disk shows a full graph instead of starting from scratch. Inactive disks accumulate data in the background so they always have a complete 60-second graph ready.
+- **Graph crawl-from-right**: new keys now start empty and fill from the right edge (like Windows Task Manager) instead of stretching sparse data across the full width.
+- **Helper network optimization**: `NetworkInterface.GetAllNetworkInterfaces()` (the most expensive per-tick call in the .NET helper) is now cached for 60 seconds. Bandwidth counters still update every tick via `GetIPStatistics()` on cached adapter objects. Added `rescan_interfaces` command for on-demand re-enumeration when adapters change.
+- Performance metric uses a 60-second rolling window for AVG and MAX, so startup spikes don't permanently inflate the display.
+- **Atomic network history write**: `net-history.json` is now written to a temporary file first, then atomically renamed into place. If the Stream Deck process crashes mid-write, the previous valid file is preserved instead of being left with partial/corrupt JSON.
+- **Reduced GC allocation in .NET helper**: `TopProcessSampler` and `MomentumHelper` now reuse dictionaries across ticks instead of allocating new collections each sample, reducing garbage collection pressure during every polling cycle.
 
 ## v0.10.1.1
 

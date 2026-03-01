@@ -866,6 +866,8 @@ internal static class FriendlyNameHelper
 
 internal static class MomentumHelper
 {
+  private static readonly List<string> s_keyBuffer = new();
+
   /// <summary>
   /// Applies value-weighted momentum scoring to stabilize "top process" display.
   /// Decay all scores by 0.8, award the raw winner proportional to its value,
@@ -874,7 +876,9 @@ internal static class MomentumHelper
   public static string? Apply(Dictionary<string, double> scores, string? rawWinner, double rawValue, double maxValue)
   {
     // Decay all
-    foreach (var key in scores.Keys.ToList())
+    s_keyBuffer.Clear();
+    s_keyBuffer.AddRange(scores.Keys);
+    foreach (var key in s_keyBuffer)
       scores[key] *= 0.8;
     // Award raw winner proportional to value (0.0 to 1.0)
     if (rawWinner != null && maxValue > 0)
@@ -883,7 +887,9 @@ internal static class MomentumHelper
       scores[rawWinner] = current + Math.Clamp(rawValue / maxValue, 0, 1);
     }
     // Prune entries with negligible score
-    foreach (var key in scores.Keys.ToList())
+    s_keyBuffer.Clear();
+    s_keyBuffer.AddRange(scores.Keys);
+    foreach (var key in s_keyBuffer)
       if (scores[key] < 0.1) scores.Remove(key);
     // Return highest scorer
     string? best = null;
@@ -971,6 +977,11 @@ internal sealed class TopProcessSampler
   private string? _lastDiskFriendlyName;
   private string? _lastDiskIconBase64;
   private readonly Dictionary<string, double> _diskScores = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<int, ProcessSnapshot> _snapshots = new();
+  private readonly Dictionary<int, (ulong read, ulong write)> _ioSnapshots = new();
+  private readonly Dictionary<string, (double totalMB, int bestId, double bestMB)> _memSumByName = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, (double pct, int bestId, double bestPct)> _cpuByName = new(StringComparer.OrdinalIgnoreCase);
+  private readonly Dictionary<string, (double bps, int bestId, double bestBps)> _diskByName = new(StringComparer.OrdinalIgnoreCase);
 
   public TopProcessSampler()
   {
@@ -985,19 +996,27 @@ internal sealed class TopProcessSampler
     }
   }
 
+  private void _swapPrev()
+  {
+    (_prev ??= new()).Clear();
+    foreach (var kv in _snapshots) _prev[kv.Key] = kv.Value;
+    (_prevIo ??= new()).Clear();
+    foreach (var kv in _ioSnapshots) _prevIo[kv.Key] = kv.Value;
+  }
+
   public TopProcessPayload? Sample(long nowMs)
   {
-    var snapshots = new Dictionary<int, ProcessSnapshot>();
-    var ioSnapshots = new Dictionary<int, (ulong read, ulong write)>();
+    _snapshots.Clear();
+    _ioSnapshots.Clear();
     foreach (var proc in Process.GetProcesses())
     {
       try
       {
         if (Excluded.Contains(proc.ProcessName)) { proc.Dispose(); continue; }
         var snap = new ProcessSnapshot(proc.Id, proc.ProcessName, proc.TotalProcessorTime, GetPrivateWorkingSet(proc));
-        snapshots[proc.Id] = snap;
+        _snapshots[proc.Id] = snap;
         var io = GetIoBytes(proc);
-        ioSnapshots[proc.Id] = io;
+        _ioSnapshots[proc.Id] = io;
       }
       catch
       {
@@ -1009,22 +1028,22 @@ internal sealed class TopProcessSampler
       }
     }
 
-    if (snapshots.Count == 0) { _prev = snapshots; _prevMs = nowMs; return null; }
+    if (_snapshots.Count == 0) { _swapPrev(); _prevMs = nowMs; return null; }
 
     // Memory: sum by process name, pick name with highest total
-    var memSumByName = new Dictionary<string, (double totalMB, int bestId, double bestMB)>(StringComparer.OrdinalIgnoreCase);
-    foreach (var snap in snapshots.Values)
+    _memSumByName.Clear();
+    foreach (var snap in _snapshots.Values)
     {
       double mb = snap.MemBytes / (1024.0 * 1024.0);
-      if (memSumByName.TryGetValue(snap.Name, out var existing))
-        memSumByName[snap.Name] = (existing.totalMB + mb, mb > existing.bestMB ? snap.Id : existing.bestId, Math.Max(mb, existing.bestMB));
+      if (_memSumByName.TryGetValue(snap.Name, out var existing))
+        _memSumByName[snap.Name] = (existing.totalMB + mb, mb > existing.bestMB ? snap.Id : existing.bestId, Math.Max(mb, existing.bestMB));
       else
-        memSumByName[snap.Name] = (mb, snap.Id, mb);
+        _memSumByName[snap.Name] = (mb, snap.Id, mb);
     }
     string? topMemName = null;
     double topMemMB = -1;
     int topMemId = -1;
-    foreach (var (name, data) in memSumByName)
+    foreach (var (name, data) in _memSumByName)
     {
       if (data.totalMB > topMemMB)
       {
@@ -1038,23 +1057,23 @@ internal sealed class TopProcessSampler
     // Build per-process CPU% map summed by name for momentum lookup
     string? rawCpuName = null;
     double rawCpuPct = 0;
-    var cpuByName = new Dictionary<string, (double pct, int bestId, double bestPct)>(StringComparer.OrdinalIgnoreCase);
+    _cpuByName.Clear();
     if (_prev != null && nowMs > _prevMs)
     {
       double elapsedMs = nowMs - _prevMs;
-      foreach (var (id, curr) in snapshots)
+      foreach (var (id, curr) in _snapshots)
       {
         if (!_prev.TryGetValue(id, out var prev)) continue;
         double cpuMs = (curr.CpuTime - prev.CpuTime).TotalMilliseconds;
         double pct = cpuMs / elapsedMs / _logicalProcessors * 100.0;
         // Sum across PIDs with the same name (matches Task Manager)
-        if (!cpuByName.TryGetValue(curr.Name, out var existing))
-          cpuByName[curr.Name] = (pct, id, pct);
+        if (!_cpuByName.TryGetValue(curr.Name, out var existing))
+          _cpuByName[curr.Name] = (pct, id, pct);
         else
-          cpuByName[curr.Name] = (existing.pct + pct, pct > existing.bestPct ? id : existing.bestId, Math.Max(pct, existing.bestPct));
+          _cpuByName[curr.Name] = (existing.pct + pct, pct > existing.bestPct ? id : existing.bestId, Math.Max(pct, existing.bestPct));
       }
       // Find name with highest summed CPU%
-      foreach (var (name, data) in cpuByName)
+      foreach (var (name, data) in _cpuByName)
       {
         if (data.pct > rawCpuPct)
         {
@@ -1066,33 +1085,33 @@ internal sealed class TopProcessSampler
 
     // Build per-process memory map for momentum lookup (summed by name)
     var memByName = new Dictionary<string, (double mb, int id)>(StringComparer.OrdinalIgnoreCase);
-    foreach (var (name, data) in memSumByName)
+    foreach (var (name, data) in _memSumByName)
       memByName[name] = (data.totalMB, data.bestId);
 
     // Disk I/O: compute per-process bytes/sec delta, sum by name, apply momentum
     string? rawDiskName = null;
     double rawDiskBps = 0;
-    var diskByName = new Dictionary<string, (double bps, int bestId, double bestBps)>(StringComparer.OrdinalIgnoreCase);
+    _diskByName.Clear();
     if (_prevIo != null && nowMs > _prevMs)
     {
       double elapsedSec = (nowMs - _prevMs) / 1000.0;
       if (elapsedSec > 0)
       {
-        foreach (var (id, currIo) in ioSnapshots)
+        foreach (var (id, currIo) in _ioSnapshots)
         {
           if (!_prevIo.TryGetValue(id, out var prevIo)) continue;
-          if (!snapshots.TryGetValue(id, out var snap)) continue;
+          if (!_snapshots.TryGetValue(id, out var snap)) continue;
           ulong dRead = currIo.read >= prevIo.read ? currIo.read - prevIo.read : 0;
           ulong dWrite = currIo.write >= prevIo.write ? currIo.write - prevIo.write : 0;
           double bps = (dRead + dWrite) / elapsedSec;
           // Sum across PIDs with the same name (matches Task Manager)
-          if (!diskByName.TryGetValue(snap.Name, out var existing))
-            diskByName[snap.Name] = (bps, id, bps);
+          if (!_diskByName.TryGetValue(snap.Name, out var existing))
+            _diskByName[snap.Name] = (bps, id, bps);
           else
-            diskByName[snap.Name] = (existing.bps + bps, bps > existing.bestBps ? id : existing.bestId, Math.Max(bps, existing.bestBps));
+            _diskByName[snap.Name] = (existing.bps + bps, bps > existing.bestBps ? id : existing.bestId, Math.Max(bps, existing.bestBps));
         }
         // Find name with highest summed I/O
-        foreach (var (name, data) in diskByName)
+        foreach (var (name, data) in _diskByName)
         {
           if (data.bps > rawDiskBps)
           {
@@ -1102,9 +1121,7 @@ internal sealed class TopProcessSampler
         }
       }
     }
-    _prevIo = ioSnapshots;
-
-    _prev = snapshots;
+    _swapPrev();
     _prevMs = nowMs;
 
     // Apply momentum scoring for CPU
@@ -1114,7 +1131,7 @@ internal sealed class TopProcessSampler
     if (rawCpuName != null)
     {
       var stickyCpu = MomentumHelper.Apply(_cpuScores, rawCpuName, rawCpuPct, 100.0);
-      if (stickyCpu != null && cpuByName.TryGetValue(stickyCpu, out var stickyData))
+      if (stickyCpu != null && _cpuByName.TryGetValue(stickyCpu, out var stickyData))
       {
         topCpuName = stickyCpu;
         topCpuPct = Math.Round(stickyData.pct, 1);
@@ -1126,7 +1143,7 @@ internal sealed class TopProcessSampler
         if (stickyCpu != null) _cpuScores.Remove(stickyCpu);
         topCpuName = rawCpuName;
         topCpuPct = Math.Round(rawCpuPct, 1);
-        if (cpuByName.TryGetValue(rawCpuName, out var rawData))
+        if (_cpuByName.TryGetValue(rawCpuName, out var rawData))
           topCpuId = rawData.bestId;
       }
     }
@@ -1160,7 +1177,7 @@ internal sealed class TopProcessSampler
     if (rawDiskName != null)
     {
       var stickyDisk = MomentumHelper.Apply(_diskScores, rawDiskName, rawDiskBps, 500_000_000.0);
-      if (stickyDisk != null && diskByName.TryGetValue(stickyDisk, out var stickyData))
+      if (stickyDisk != null && _diskByName.TryGetValue(stickyDisk, out var stickyData))
       {
         topDiskName = stickyDisk;
         topDiskBps = stickyData.bps;
@@ -1171,7 +1188,7 @@ internal sealed class TopProcessSampler
         if (stickyDisk != null) _diskScores.Remove(stickyDisk);
         topDiskName = rawDiskName;
         topDiskBps = rawDiskBps;
-        if (diskByName.TryGetValue(rawDiskName, out var rawData))
+        if (_diskByName.TryGetValue(rawDiskName, out var rawData))
           topDiskId = rawData.bestId;
       }
     }
@@ -1356,6 +1373,7 @@ internal static class Program
   private const int DefaultIntervalMs = 1000;
   private const int MinIntervalMs = 250;
   private const int DiskCacheRefreshMs = 10 * 60 * 1000;
+  private const int NetIfaceCacheRefreshMs = 60 * 1000;
 
   public static async Task<int> Main(string[] args)
   {
@@ -1515,6 +1533,10 @@ internal static class Program
     var disksCache = new List<DiskItem>();
     long disksCacheAt = 0;
 
+    int forceNetIfaceRefreshFlag = 0;
+    NetworkInterface[]? netIfacesArr = null;
+    long netIfaceCacheAt = 0;
+
     _ = Task.Run(async () =>
     {
       while (!cts.IsCancellationRequested)
@@ -1540,6 +1562,11 @@ internal static class Program
           Interlocked.Exchange(ref forceDiskRefreshFlag, 1);
           Console.Error.WriteLine("[SimpleStatsHelper] command rescan_disks");
         }
+        else if (command.Equals("rescan_interfaces", StringComparison.OrdinalIgnoreCase))
+        {
+          Interlocked.Exchange(ref forceNetIfaceRefreshFlag, 1);
+          Console.Error.WriteLine("[SimpleStatsHelper] command rescan_interfaces");
+        }
       }
     }, cts.Token);
 
@@ -1553,9 +1580,26 @@ internal static class Program
       var items = new List<NetItem>();
       var disks = disksCache;
 
-      try
+      // Re-enumerate adapters every 60s or on manual rescan; reuse cached objects otherwise.
+      bool forceNetRefresh = Interlocked.Exchange(ref forceNetIfaceRefreshFlag, 0) == 1;
+      bool netCacheStale = netIfacesArr == null || now - netIfaceCacheAt >= NetIfaceCacheRefreshMs;
+      if (forceNetRefresh || netCacheStale)
       {
-        foreach (var iface in NetworkInterface.GetAllNetworkInterfaces())
+        try
+        {
+          netIfacesArr = NetworkInterface.GetAllNetworkInterfaces();
+          netIfaceCacheAt = now;
+        }
+        catch
+        {
+          // Keep using existing cached array if available.
+        }
+      }
+
+      // Read fresh rx/tx counters from cached NetworkInterface objects each tick.
+      if (netIfacesArr != null)
+      {
+        foreach (var iface in netIfacesArr)
         {
           try
           {
@@ -1572,13 +1616,9 @@ internal static class Program
           }
           catch
           {
-            // Skip interfaces that fail to report stats.
+            // Skip interfaces that fail to report stats (e.g. adapter removed).
           }
         }
-      }
-      catch
-      {
-        // Ignore enumeration errors.
       }
 
       bool forceDiskRefresh = Interlocked.Exchange(ref forceDiskRefreshFlag, 0) == 1;
