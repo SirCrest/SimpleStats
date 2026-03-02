@@ -1,5 +1,25 @@
 # Change History
 
+## v0.11.0.0 (2026-03-02)
+
+- Added CPU Clock Frequency metric (`cpu-freq`): average MHz across all cores via `CallNtPowerInformation`, displayed as GHz/MHz with auto-scaling graph
+- Added GPU Clock metric (`gpu-clock`): graphics core clock MHz via `nvmlDeviceGetClockInfo`
+- Added GPU Memory Clock metric (`gpu-mem-clock`): VRAM clock MHz via `nvmlDeviceGetClockInfo`
+- Added GPU Encoder metric (`gpu-encoder`): NVENC utilization % via `nvmlDeviceGetEncoderUtilization`
+- Added GPU Decoder metric (`gpu-decoder`): NVDEC utilization % via `nvmlDeviceGetDecoderUtilization`
+- Added GPU Fan Speed metric (`gpu-fan`): fan % via `nvmlDeviceGetFanSpeed`
+- Added GPU PCIe Download/Upload metrics (`gpu-pcie-rx`, `gpu-pcie-tx`): bus throughput in KB/s via `nvmlDeviceGetPcieThroughput`, formatted as MB/s or GB/s
+- Added GPU Throttle Status metric (`gpu-throttle`): reads clocks throttle reasons bitmask, displays highest-priority reason (HW THERM, HW PWR, SW THERM, PWR CAP, HW SLOW, SYNC, or NONE)
+- All 6 new NVML calls wrapped with `EntryPointNotFoundException` guards for older driver compatibility
+- Extended `CpuPayload` record with `frequencyMhz` field
+- Extended `GpuItem` record with 8 new nullable fields
+- Updated GPU and CPU property inspectors with new metric entries
+- Encoder, decoder, and fan speed added to `PERCENT_METRICS` for alert threshold support
+- Removed polling interval selector (1–5 sec) from all 6 property inspectors; hardcoded to 1-second cadence
+- Removed `pollIntervalSec` from `NormalizedSettings`, `DEFAULT_SETTINGS`, `settingsKey()`, and `normalizeSettings()` in base-metric.ts
+- Removed `handlePollIntervalChange()`, `clampPollInterval()`, and poll-interval wiring from pi-common.js
+- Old saved `pollIntervalSec` values in Settings are silently ignored (field kept in input type for compatibility)
+
 ## v0.10.4.0 (2026-02-28)
 
 - Per-disk graph history for Auto (Most Active): each disk retains its own graph history independently; switching drives no longer clears the graph, and inactive disks accumulate data in the background

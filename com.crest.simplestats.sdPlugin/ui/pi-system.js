@@ -15,7 +15,7 @@
   }
 
   function updateVisibility() {
-    setVisible(document.getElementById("poll-row"), true);
+    // no conditional fields for system metrics
   }
 
   initPI({

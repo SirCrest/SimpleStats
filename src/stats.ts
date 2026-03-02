@@ -16,6 +16,14 @@ export type GpuSnapshot = {
   topComputeName: string | null;
   topComputePct: number | null;
   topComputeIconBase64: string | null;
+  clockMHz: number | null;
+  memClockMHz: number | null;
+  encoderPct: number | null;
+  decoderPct: number | null;
+  fanPct: number | null;
+  pcieRxKBps: number | null;
+  pcieTxKBps: number | null;
+  throttleReasons: number | null;
 };
 
 export type DiskSnapshot = {
@@ -82,6 +90,7 @@ export type StatsSnapshot = {
   cpu: {
     total: number | null;
     cores: number[] | null;
+    frequencyMhz: number | null;
   };
   memUsedPct: number | null;
   memUsedBytes: number | null;
@@ -353,6 +362,7 @@ type HelperDisk = {
 type HelperCpu = {
   total: number | null;
   cores: number[] | null;
+  frequencyMhz: number | null;
 };
 type HelperMem = {
   totalBytes: number;
@@ -369,6 +379,14 @@ type HelperGpu = {
   topComputeName: string | null;
   topComputePct: number | null;
   topComputeIconBase64: string | null;
+  clockMHz: number | null;
+  memClockMHz: number | null;
+  encoderPct: number | null;
+  decoderPct: number | null;
+  fanPct: number | null;
+  pcieRxKBps: number | null;
+  pcieTxKBps: number | null;
+  throttleReasons: number | null;
 };
 type HelperDiskPerfItem = {
   id: string;
@@ -432,7 +450,8 @@ function emptySnapshot(): StatsSnapshot {
     osSupported,
     cpu: {
       total: null,
-      cores: null
+      cores: null,
+      frequencyMhz: null
     },
     memUsedPct: null,
     memUsedBytes: null,
@@ -953,7 +972,8 @@ function parseHelperSnapshot(payload: unknown): HelperSnapshot | null {
     if (Array.isArray(coresRaw)) {
       cores = coresRaw.map((value) => parseNumberFromUnknown(value) ?? 0);
     }
-    cpu = { total, cores };
+    const frequencyMhz = parseNumberFromUnknown((cpuRaw as { frequencyMhz?: unknown }).frequencyMhz);
+    cpu = { total, cores, frequencyMhz };
   }
 
   let mem: HelperMem | null = null;
@@ -988,7 +1008,15 @@ function parseHelperSnapshot(payload: unknown): HelperSnapshot | null {
         powerW: parseNumberFromUnknown((raw as { powerW?: unknown }).powerW),
         topComputeName,
         topComputePct: parseNumberFromUnknown((raw as { topComputePct?: unknown }).topComputePct),
-        topComputeIconBase64
+        topComputeIconBase64,
+        clockMHz: parseNumberFromUnknown((raw as { clockMHz?: unknown }).clockMHz),
+        memClockMHz: parseNumberFromUnknown((raw as { memClockMHz?: unknown }).memClockMHz),
+        encoderPct: parseNumberFromUnknown((raw as { encoderPct?: unknown }).encoderPct),
+        decoderPct: parseNumberFromUnknown((raw as { decoderPct?: unknown }).decoderPct),
+        fanPct: parseNumberFromUnknown((raw as { fanPct?: unknown }).fanPct),
+        pcieRxKBps: parseNumberFromUnknown((raw as { pcieRxKBps?: unknown }).pcieRxKBps),
+        pcieTxKBps: parseNumberFromUnknown((raw as { pcieTxKBps?: unknown }).pcieTxKBps),
+        throttleReasons: parseNumberFromUnknown((raw as { throttleReasons?: unknown }).throttleReasons)
       });
     }
     gpus = list;
@@ -1949,13 +1977,16 @@ class StatsPoller {
 
       let cpuTotal = this.snapshot.cpu.total;
       let cpuCores = this.snapshot.cpu.cores;
+      let cpuFrequencyMhz = this.snapshot.cpu.frequencyMhz;
       if (needCpu) {
         if (helperCpu) {
           cpuTotal = toPercent(helperCpu.total);
           cpuCores = helperCpu.cores ? helperCpu.cores.map((value) => toPercent(value) ?? 0) : null;
+          cpuFrequencyMhz = toNumber(helperCpu.frequencyMhz);
         } else {
           cpuTotal = null;
           cpuCores = null;
+          cpuFrequencyMhz = null;
         }
       }
 
@@ -1994,7 +2025,8 @@ class StatsPoller {
         ...this.snapshot,
         cpu: {
           total: cpuTotal,
-          cores: cpuCores
+          cores: cpuCores,
+          frequencyMhz: cpuFrequencyMhz
         },
         memUsedPct,
         memUsedBytes,
@@ -2048,7 +2080,15 @@ class StatsPoller {
             powerW: toNumber(gpu.powerW),
             topComputeName: gpu.topComputeName,
             topComputePct: toNumber(gpu.topComputePct),
-            topComputeIconBase64: gpu.topComputeIconBase64
+            topComputeIconBase64: gpu.topComputeIconBase64,
+            clockMHz: toNumber(gpu.clockMHz),
+            memClockMHz: toNumber(gpu.memClockMHz),
+            encoderPct: toPercent(gpu.encoderPct),
+            decoderPct: toPercent(gpu.decoderPct),
+            fanPct: toPercent(gpu.fanPct),
+            pcieRxKBps: toNumber(gpu.pcieRxKBps),
+            pcieTxKBps: toNumber(gpu.pcieTxKBps),
+            throttleReasons: toNumber(gpu.throttleReasons)
           };
         });
       } else {

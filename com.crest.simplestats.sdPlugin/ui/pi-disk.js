@@ -24,7 +24,6 @@
     const isDiskSpace = metric === "disk-used" || metric === "disk-free";
     setVisible(document.getElementById("disk-row"), !isTopDisk);
     setVisible(document.getElementById("disk-space-note"), isDiskSpace);
-    setVisible(document.getElementById("poll-row"), !isDiskSpace && !isTopDisk);
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);
     setVisible(document.getElementById("threshold-note"), isPercent);

@@ -17,7 +17,6 @@
   }
 
   function updateVisibility(metric) {
-    setVisible(document.getElementById("poll-row"), true);
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);
     setVisible(document.getElementById("threshold-note"), isPercent);

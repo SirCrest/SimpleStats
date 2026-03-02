@@ -7,6 +7,14 @@
     { value: "gpu-vram-used", label: "VRAM Used (GB)" },
     { value: "gpu-temp", label: "Temperature" },
     { value: "gpu-power", label: "Power (W)" },
+    { value: "gpu-clock", label: "GPU Clock (MHz)" },
+    { value: "gpu-mem-clock", label: "Memory Clock (MHz)" },
+    { value: "gpu-encoder", label: "Encoder (NVENC %)" },
+    { value: "gpu-decoder", label: "Decoder (NVDEC %)" },
+    { value: "gpu-fan", label: "Fan Speed (%)" },
+    { value: "gpu-pcie-rx", label: "PCIe Download" },
+    { value: "gpu-pcie-tx", label: "PCIe Upload" },
+    { value: "gpu-throttle", label: "Throttle Status" },
     { value: "gpu-top-compute", label: "Top Process (Compute)" }
   ];
 
@@ -20,7 +28,6 @@
 
   function updateVisibility(metric) {
     setVisible(document.getElementById("gpu-row"), true);
-    setVisible(document.getElementById("poll-row"), true);
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);
     setVisible(document.getElementById("threshold-note"), isPercent);

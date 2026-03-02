@@ -140,11 +140,20 @@ export type MetricId =
   | "cpu-total"
   | "cpu-core"
   | "cpu-peak"
+  | "cpu-freq"
   | "gpu-load"
   | "gpu-vram"
   | "gpu-vram-used"
   | "gpu-temp"
   | "gpu-power"
+  | "gpu-clock"
+  | "gpu-mem-clock"
+  | "gpu-encoder"
+  | "gpu-decoder"
+  | "gpu-fan"
+  | "gpu-pcie-rx"
+  | "gpu-pcie-tx"
+  | "gpu-throttle"
   | "gpu-top-compute"
   | "mem-total"
   | "mem-used"
@@ -187,7 +196,6 @@ type NormalizedSettings = {
   diskId: string;
   netIface: string;
   netPeriodSec: number;
-  pollIntervalSec: number;
   warnThreshold: number;
   topThreshold: number;
 };
@@ -263,8 +271,8 @@ const backgroundStates = new Map<string, BackgroundState>();
 let backgroundUnsubscribe: (() => void) | null = null;
 
 const METRICS_BY_GROUP: Record<MetricGroup, MetricId[]> = {
-  cpu: ["cpu-total", "cpu-core", "cpu-peak", "top-cpu"],
-  gpu: ["gpu-load", "gpu-vram", "gpu-vram-used", "gpu-temp", "gpu-power", "gpu-top-compute"],
+  cpu: ["cpu-total", "cpu-core", "cpu-peak", "cpu-freq", "top-cpu"],
+  gpu: ["gpu-load", "gpu-vram", "gpu-vram-used", "gpu-temp", "gpu-power", "gpu-clock", "gpu-mem-clock", "gpu-encoder", "gpu-decoder", "gpu-fan", "gpu-pcie-rx", "gpu-pcie-tx", "gpu-throttle", "gpu-top-compute"],
   memory: ["mem-total", "mem-used", "top-mem", "top-mem-pct"],
   disk: ["disk-activity", "disk-used", "disk-free", "disk-read", "disk-write", "top-disk"],
   network: ["net-down", "net-up", "net-total"],
@@ -289,7 +297,6 @@ const DEFAULT_SETTINGS: NormalizedSettings = {
   diskId: "",
   netIface: "",
   netPeriodSec: 60,
-  pollIntervalSec: 1,
   warnThreshold: 0,
   topThreshold: 0
 };
@@ -415,7 +422,7 @@ function historyPointsForInterval(intervalSec: number): number {
 function intervalMsForSettings(settings: NormalizedSettings): number {
   return settings.group === "disk" && (settings.metric === "disk-used" || settings.metric === "disk-free")
     ? 60_000
-    : Math.max(1, settings.pollIntervalSec) * 1000;
+    : 1000;
 }
 
 function isDiskSpaceMetric(settings: NormalizedSettings): boolean {
@@ -717,6 +724,7 @@ function renderProcessName(name: string, color: string): string {
 
 const PERCENT_METRICS: Set<MetricId> = new Set([
   "cpu-total", "cpu-core", "cpu-peak", "gpu-load", "gpu-vram",
+  "gpu-encoder", "gpu-decoder", "gpu-fan",
   "mem-total", "disk-activity", "disk-used", "disk-free", "top-mem-pct"
 ]);
 
@@ -896,7 +904,8 @@ function normalizeSettings(settings: Settings | undefined): NormalizedSettings {
   const metric =
     group === "cpu"
       ? (mappedMetric === "cpu-peak" || mappedMetric === "top-cpu" ||
-         mappedMetric === "cpu-core" || mappedMetric === "cpu-total")
+         mappedMetric === "cpu-core" || mappedMetric === "cpu-total" ||
+         mappedMetric === "cpu-freq")
         ? mappedMetric
         : cpuPerCore ? "cpu-core" : "cpu-total"
       : mappedMetric && METRICS_BY_GROUP[group].includes(mappedMetric)
@@ -912,7 +921,6 @@ function normalizeSettings(settings: Settings | undefined): NormalizedSettings {
     diskId: typeof settings?.diskId === "string" ? settings.diskId : DEFAULT_SETTINGS.diskId,
     netIface: typeof settings?.netIface === "string" ? settings.netIface : DEFAULT_SETTINGS.netIface,
     netPeriodSec: toInt(settings?.netPeriodSec, DEFAULT_SETTINGS.netPeriodSec),
-    pollIntervalSec: clampPollInterval(toInt(settings?.pollIntervalSec, DEFAULT_SETTINGS.pollIntervalSec)),
     warnThreshold: Math.max(0, Math.min(100, toInt(settings?.warnThreshold, DEFAULT_SETTINGS.warnThreshold))),
     topThreshold: Math.max(0, Math.min(metric === "top-disk" ? 10000 : 100, toInt(settings?.topThreshold, DEFAULT_SETTINGS.topThreshold)))
   };
@@ -928,7 +936,6 @@ function settingsKey(settings: NormalizedSettings): string {
     settings.diskId,
     settings.netIface,
     settings.netPeriodSec,
-    settings.pollIntervalSec,
     settings.warnThreshold,
     settings.topThreshold
   ].join("|");
@@ -941,11 +948,6 @@ function toInt(value: number | string | undefined, fallback: number): number {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
-}
-
-function clampPollInterval(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_SETTINGS.pollIntervalSec;
-  return Math.max(1, Math.min(5, Math.round(value)));
 }
 
 function isMetricGroup(value: unknown): value is MetricGroup {
@@ -964,11 +966,20 @@ function isMetricId(value: unknown): value is MetricId {
     value === "cpu-total" ||
     value === "cpu-core" ||
     value === "cpu-peak" ||
+    value === "cpu-freq" ||
     value === "gpu-load" ||
     value === "gpu-vram" ||
     value === "gpu-vram-used" ||
     value === "gpu-temp" ||
     value === "gpu-power" ||
+    value === "gpu-clock" ||
+    value === "gpu-mem-clock" ||
+    value === "gpu-encoder" ||
+    value === "gpu-decoder" ||
+    value === "gpu-fan" ||
+    value === "gpu-pcie-rx" ||
+    value === "gpu-pcie-tx" ||
+    value === "gpu-throttle" ||
     value === "gpu-top-compute" ||
     value === "mem-total" ||
     value === "mem-used" ||
@@ -1032,6 +1043,38 @@ function formatTopMem(name: string | null, mb: number | null): string {
 function formatClock(value: Date): string {
   const pad = (num: number) => String(num).padStart(2, "0");
   return `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
+}
+
+function formatFreqMHz(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) return "--";
+  if (value >= 1000) return `${(value / 1000).toFixed(2)}GHz`;
+  return `${Math.round(value)}MHz`;
+}
+
+function formatPcieRate(kbps: number | null): string {
+  if (kbps === null || !Number.isFinite(kbps)) return "--";
+  const mbps = kbps / 1024;
+  if (mbps >= 1024) {
+    const gbps = mbps / 1024;
+    return gbps < 10 ? `${gbps.toFixed(1)}GB/s` : `${Math.round(gbps)}GB/s`;
+  }
+  return mbps < 10 ? `${mbps.toFixed(1)}MB/s` : `${Math.round(mbps)}MB/s`;
+}
+
+function formatThrottle(reasons: number | null): string {
+  if (reasons === null || !Number.isFinite(reasons)) return "--";
+  const bits = reasons >>> 0; // treat as unsigned 32-bit
+  // Also check the upper bits via the original number
+  const reasonsNum = reasons;
+  if (reasonsNum === 0 || (bits === 0 && reasonsNum <= 0)) return "NONE";
+  // Priority order: hardware thermal > hardware power > software thermal > power cap > hardware slowdown > sync
+  if (reasonsNum & 0x100) return "HW THERM";
+  if (reasonsNum & 0x200) return "HW PWR";
+  if (reasonsNum & 0x080) return "SW THERM";
+  if (reasonsNum & 0x010) return "PWR CAP";
+  if (reasonsNum & 0x020) return "HW SLOW";
+  if (reasonsNum & 0x040) return "SYNC";
+  return "THRTL";
 }
 
 function formatBytesShort(value: number | null): string {
@@ -1194,6 +1237,17 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         graphMin: 0
       };
     }
+    case "cpu-freq": {
+      const freq = snapshot.cpu.frequencyMhz;
+      return {
+        label: "CPU FREQ",
+        value: formatFreqMHz(freq),
+        graphValue: freq,
+        graphMax: null,
+        graphMinMax: null,
+        graphMin: 0
+      };
+    }
     case "gpu-load": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
       return {
@@ -1250,6 +1304,98 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
         value: formatPower(gpu?.powerW ?? null),
         graphValue: gpu?.powerW ?? null,
         graphMax: null,
+        graphMinMax: null,
+        graphMin: 0
+      };
+    }
+    case "gpu-clock": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      return {
+        label: labelWithIndex("GPU CLK", gpu ? gpu.index : 0),
+        value: formatFreqMHz(gpu?.clockMHz ?? null),
+        graphValue: gpu?.clockMHz ?? null,
+        graphMax: null,
+        graphMinMax: null,
+        graphMin: 0
+      };
+    }
+    case "gpu-mem-clock": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      return {
+        label: labelWithIndex("GPU MCLK", gpu ? gpu.index : 0),
+        value: formatFreqMHz(gpu?.memClockMHz ?? null),
+        graphValue: gpu?.memClockMHz ?? null,
+        graphMax: null,
+        graphMinMax: null,
+        graphMin: 0
+      };
+    }
+    case "gpu-encoder": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      return {
+        label: labelWithIndex("GPU ENC", gpu ? gpu.index : 0),
+        value: formatPercent(gpu?.encoderPct ?? null),
+        graphValue: gpu?.encoderPct ?? null,
+        graphMax: 100,
+        graphMinMax: null,
+        graphMin: 0
+      };
+    }
+    case "gpu-decoder": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      return {
+        label: labelWithIndex("GPU DEC", gpu ? gpu.index : 0),
+        value: formatPercent(gpu?.decoderPct ?? null),
+        graphValue: gpu?.decoderPct ?? null,
+        graphMax: 100,
+        graphMinMax: null,
+        graphMin: 0
+      };
+    }
+    case "gpu-fan": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      return {
+        label: labelWithIndex("GPU FAN", gpu ? gpu.index : 0),
+        value: formatPercent(gpu?.fanPct ?? null),
+        graphValue: gpu?.fanPct ?? null,
+        graphMax: 100,
+        graphMinMax: null,
+        graphMin: 0
+      };
+    }
+    case "gpu-pcie-rx": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      return {
+        label: labelWithIndex("GPU PCIE", gpu ? gpu.index : 0),
+        labelArrow: "down",
+        value: formatPcieRate(gpu?.pcieRxKBps ?? null),
+        graphValue: gpu?.pcieRxKBps ?? null,
+        graphMax: null,
+        graphMinMax: 10,
+        graphMin: 0
+      };
+    }
+    case "gpu-pcie-tx": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      return {
+        label: labelWithIndex("GPU PCIE", gpu ? gpu.index : 0),
+        labelArrow: "up",
+        value: formatPcieRate(gpu?.pcieTxKBps ?? null),
+        graphValue: gpu?.pcieTxKBps ?? null,
+        graphMax: null,
+        graphMinMax: 10,
+        graphMin: 0
+      };
+    }
+    case "gpu-throttle": {
+      const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const reasons = gpu?.throttleReasons ?? null;
+      const isThrottled = reasons !== null && reasons !== 0;
+      return {
+        label: labelWithIndex("GPU THR", gpu ? gpu.index : 0),
+        value: formatThrottle(reasons),
+        graphValue: isThrottled ? 100 : 0,
+        graphMax: 100,
         graphMinMax: null,
         graphMin: 0
       };
@@ -1758,12 +1904,12 @@ export class BaseMetricAction extends SingletonAction<Settings> {
         cacheKeyBase,
         cacheKey,
         settingsReady: true,
-        history: new HistorySeries(historyPointsForInterval(normalized.pollIntervalSec)),
+        history: new HistorySeries(historyPointsForInterval(1)),
         diskSpaceWarmupComplete: false
       };
       if (background && background.settingsKey === nextKey) {
         state.history = background.history;
-        state.history.setMaxPoints(historyPointsForInterval(normalized.pollIntervalSec));
+        state.history.setMaxPoints(historyPointsForInterval(1));
         writeDebugLog("historyBackgroundRestore", { actionId: actionInstance.id, cacheKey });
       } else if (reuseValues) {
         state.history.setValues(reuseValues);
@@ -1788,17 +1934,17 @@ export class BaseMetricAction extends SingletonAction<Settings> {
       if (background) {
         stopBackgroundState(nextCacheKey, background);
         existing.history = background.history;
-        existing.history.setMaxPoints(historyPointsForInterval(normalized.pollIntervalSec));
+        existing.history.setMaxPoints(historyPointsForInterval(1));
         writeDebugLog("historyBackgroundRestore", { actionId: actionInstance.id, cacheKey: nextCacheKey });
       } else {
         const cached = historyCache.get(nextCacheKey) ?? null;
         if (cached && cached.settingsKey === nextKey) {
-          existing.history = new HistorySeries(historyPointsForInterval(normalized.pollIntervalSec));
+          existing.history = new HistorySeries(historyPointsForInterval(1));
           existing.history.setValues(cached.values);
           historyCache.delete(nextCacheKey);
           writeDebugLog("historyCacheRestore", { actionId: actionInstance.id, cacheKey: nextCacheKey });
         } else {
-          existing.history.setMaxPoints(historyPointsForInterval(normalized.pollIntervalSec));
+          existing.history.setMaxPoints(historyPointsForInterval(1));
           existing.history.clear();
         }
       }

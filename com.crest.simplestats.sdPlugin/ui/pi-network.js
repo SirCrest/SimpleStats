@@ -19,7 +19,6 @@
     setVisible(document.getElementById("net-row"), true);
     setVisible(document.getElementById("net-period-row"), metric === "net-total");
     setVisible(document.getElementById("net-total-note"), metric === "net-total");
-    setVisible(document.getElementById("poll-row"), true);
     // Network metrics are not percent-based, hide alert
     setVisible(document.getElementById("warn-threshold-row"), false);
     setVisible(document.getElementById("threshold-note"), false);

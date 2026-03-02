@@ -28,7 +28,7 @@ public sealed record DiskItem(
   string label
 );
 
-public sealed record CpuPayload(double? total, List<double> cores);
+public sealed record CpuPayload(double? total, List<double> cores, double? frequencyMhz);
 
 public sealed record DiskPerfItem(string id, double? activePct, double? readBps, double? writeBps);
 
@@ -46,7 +46,15 @@ public sealed record GpuItem(
   double? powerW,
   string? topComputeName,
   double? topComputePct,
-  string? topComputeIconBase64
+  string? topComputeIconBase64,
+  uint? clockMHz,
+  uint? memClockMHz,
+  uint? encoderPct,
+  uint? decoderPct,
+  uint? fanPct,
+  uint? pcieRxKBps,
+  uint? pcieTxKBps,
+  ulong? throttleReasons
 );
 
 public sealed record TopProcessPayload(
@@ -140,6 +148,27 @@ internal sealed class CpuSampler
   private static extern int NtQuerySystemInformation(int systemInformationClass,
     [Out] SYSTEM_PROCESSOR_PERFORMANCE_INFORMATION[] buffer, int bufferSize, out int returnLength);
 
+  [StructLayout(LayoutKind.Sequential)]
+  private struct PROCESSOR_POWER_INFORMATION
+  {
+    public uint Number;
+    public uint MaxMhz;
+    public uint CurrentMhz;
+    public uint MhzLimit;
+    public uint MaxIdleState;
+    public uint CurrentIdleState;
+  }
+
+  private const int ProcessorInformation = 11; // PROCESSOR_INFORMATION_CLASS for CallNtPowerInformation
+
+  [DllImport("powrprof.dll")]
+  private static extern uint CallNtPowerInformation(
+    int informationLevel,
+    IntPtr inputBuffer,
+    uint inputBufferLength,
+    [Out] PROCESSOR_POWER_INFORMATION[] outputBuffer,
+    uint outputBufferLength);
+
   private const int SystemProcessorPerformanceInformation = 8;
   private readonly int _processorCount = Environment.ProcessorCount;
 
@@ -175,7 +204,7 @@ internal sealed class CpuSampler
             _prevCoreUser[i] = coreInfo[i].UserTime;
           }
         }
-        return new CpuPayload(null, new List<double>());
+        return new CpuPayload(null, new List<double>(), TryGetAverageFrequencyMhz());
       }
 
       // Total CPU
@@ -211,7 +240,33 @@ internal sealed class CpuSampler
       }
 
       _prevIdle = idle; _prevKernel = kernel; _prevUser = user;
-      return new CpuPayload(total, cores);
+      return new CpuPayload(total, cores, TryGetAverageFrequencyMhz());
+    }
+    catch
+    {
+      return null;
+    }
+  }
+
+  private double? TryGetAverageFrequencyMhz()
+  {
+    try
+    {
+      var info = new PROCESSOR_POWER_INFORMATION[_processorCount];
+      uint bufferSize = (uint)(_processorCount * Marshal.SizeOf<PROCESSOR_POWER_INFORMATION>());
+      uint result = CallNtPowerInformation(ProcessorInformation, IntPtr.Zero, 0, info, bufferSize);
+      if (result != 0) return null;
+      double sum = 0;
+      int count = 0;
+      for (int i = 0; i < _processorCount; i++)
+      {
+        if (info[i].CurrentMhz > 0)
+        {
+          sum += info[i].CurrentMhz;
+          count++;
+        }
+      }
+      return count > 0 ? sum / count : null;
     }
     catch
     {
@@ -556,6 +611,29 @@ internal sealed class NvidiaGpuSampler
   [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
   private static extern int nvmlDeviceGetProcessUtilization(IntPtr device, [In, Out] NvmlProcessUtilizationSample[]? utilizations, ref uint processSamplesCount, ulong lastSeenTimeStamp);
 
+  [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
+  private static extern int nvmlDeviceGetClockInfo(IntPtr device, uint clockType, out uint clockMHz);
+
+  [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
+  private static extern int nvmlDeviceGetEncoderUtilization(IntPtr device, out uint utilization, out uint samplingPeriodUs);
+
+  [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
+  private static extern int nvmlDeviceGetDecoderUtilization(IntPtr device, out uint utilization, out uint samplingPeriodUs);
+
+  [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
+  private static extern int nvmlDeviceGetFanSpeed(IntPtr device, out uint speed);
+
+  [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
+  private static extern int nvmlDeviceGetPcieThroughput(IntPtr device, uint counter, out uint kbps);
+
+  [DllImport("nvml.dll", CallingConvention = CallingConvention.Cdecl)]
+  private static extern int nvmlDeviceGetCurrentClocksThrottleReasons(IntPtr device, out ulong reasons);
+
+  private const uint NVML_CLOCK_GRAPHICS = 0;
+  private const uint NVML_CLOCK_MEM = 2;
+  private const uint NVML_PCIE_UTIL_TX_BYTES = 0;
+  private const uint NVML_PCIE_UTIL_RX_BYTES = 1;
+
   private sealed record Device(uint Index, IntPtr Handle, string Name);
 
   private readonly List<Device> _devices = new();
@@ -700,6 +778,13 @@ internal sealed class NvidiaGpuSampler
       double? powerW = TryGetPower(device.Handle);
       var (topComputeName, topComputePct, topComputePid) = TryGetTopComputeProcess(device.Handle, device.Index);
       string? topComputeIcon = topComputePid > 0 ? IconHelper.GetIconBase64((int)topComputePid) : null;
+      uint? clockMHz = TryGetClockGraphics(device.Handle);
+      uint? memClockMHz = TryGetClockMem(device.Handle);
+      uint? encoderPct = TryGetEncoderUtil(device.Handle);
+      uint? decoderPct = TryGetDecoderUtil(device.Handle);
+      uint? fanPct = TryGetFanSpeed(device.Handle);
+      var (pcieRxKBps, pcieTxKBps) = TryGetPcieThroughput(device.Handle);
+      ulong? throttleReasons = TryGetThrottleReasons(device.Handle);
       list.Add(new GpuItem(
         index: (int)device.Index,
         name: device.Name,
@@ -710,7 +795,15 @@ internal sealed class NvidiaGpuSampler
         powerW: powerW,
         topComputeName: topComputeName,
         topComputePct: topComputePct,
-        topComputeIconBase64: topComputeIcon
+        topComputeIconBase64: topComputeIcon,
+        clockMHz: clockMHz,
+        memClockMHz: memClockMHz,
+        encoderPct: encoderPct,
+        decoderPct: decoderPct,
+        fanPct: fanPct,
+        pcieRxKBps: pcieRxKBps,
+        pcieTxKBps: pcieTxKBps,
+        throttleReasons: throttleReasons
       ));
     }
     return list;
@@ -781,6 +874,78 @@ internal sealed class NvidiaGpuSampler
   {
     if (nvmlDeviceGetPowerUsage(handle, out var milliwatts) != NVML_SUCCESS) return null;
     return milliwatts / 1000.0;
+  }
+
+  private static uint? TryGetClockGraphics(IntPtr handle)
+  {
+    try
+    {
+      if (nvmlDeviceGetClockInfo(handle, NVML_CLOCK_GRAPHICS, out var mhz) != NVML_SUCCESS) return null;
+      return mhz;
+    }
+    catch (EntryPointNotFoundException) { return null; }
+  }
+
+  private static uint? TryGetClockMem(IntPtr handle)
+  {
+    try
+    {
+      if (nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM, out var mhz) != NVML_SUCCESS) return null;
+      return mhz;
+    }
+    catch (EntryPointNotFoundException) { return null; }
+  }
+
+  private static uint? TryGetEncoderUtil(IntPtr handle)
+  {
+    try
+    {
+      if (nvmlDeviceGetEncoderUtilization(handle, out var util, out _) != NVML_SUCCESS) return null;
+      return util;
+    }
+    catch (EntryPointNotFoundException) { return null; }
+  }
+
+  private static uint? TryGetDecoderUtil(IntPtr handle)
+  {
+    try
+    {
+      if (nvmlDeviceGetDecoderUtilization(handle, out var util, out _) != NVML_SUCCESS) return null;
+      return util;
+    }
+    catch (EntryPointNotFoundException) { return null; }
+  }
+
+  private static uint? TryGetFanSpeed(IntPtr handle)
+  {
+    try
+    {
+      if (nvmlDeviceGetFanSpeed(handle, out var speed) != NVML_SUCCESS) return null;
+      return speed;
+    }
+    catch (EntryPointNotFoundException) { return null; }
+  }
+
+  private static (uint? rxKBps, uint? txKBps) TryGetPcieThroughput(IntPtr handle)
+  {
+    try
+    {
+      uint? rx = null, tx = null;
+      if (nvmlDeviceGetPcieThroughput(handle, NVML_PCIE_UTIL_RX_BYTES, out var rxVal) == NVML_SUCCESS) rx = rxVal;
+      if (nvmlDeviceGetPcieThroughput(handle, NVML_PCIE_UTIL_TX_BYTES, out var txVal) == NVML_SUCCESS) tx = txVal;
+      return (rx, tx);
+    }
+    catch (EntryPointNotFoundException) { return (null, null); }
+  }
+
+  private static ulong? TryGetThrottleReasons(IntPtr handle)
+  {
+    try
+    {
+      if (nvmlDeviceGetCurrentClocksThrottleReasons(handle, out var reasons) != NVML_SUCCESS) return null;
+      return reasons;
+    }
+    catch (EntryPointNotFoundException) { return null; }
   }
 
   private static long? ToLong(ulong value)

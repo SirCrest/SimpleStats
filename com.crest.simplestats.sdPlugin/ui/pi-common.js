@@ -88,6 +88,7 @@ if (streamDeckClient.onDidReceivePluginMessage) {
 // ─── Metric sets ─────────────────────────────────────────────────────────
 const PERCENT_METRICS = new Set([
   "cpu-total", "cpu-core", "cpu-peak", "gpu-load", "gpu-vram",
+  "gpu-encoder", "gpu-decoder", "gpu-fan",
   "mem-total", "disk-activity", "disk-used", "disk-free", "top-mem-pct"
 ]);
 
@@ -98,7 +99,7 @@ const TOP_PROCESS_METRICS = new Set([
 // ─── Settings helpers ────────────────────────────────────────────────────
 const SETTINGS_KEYS = [
   "group", "metric", "cpuPerCore", "cpuCore", "gpuIndex",
-  "diskId", "netIface", "netPeriodSec", "pollIntervalSec",
+  "diskId", "netIface", "netPeriodSec",
   "warnThreshold", "topThreshold"
 ];
 
@@ -208,10 +209,6 @@ function readPositiveInt(value, fallback) {
   return fallback;
 }
 
-function clampPollInterval(value) {
-  return Math.max(1, Math.min(5, value));
-}
-
 // ─── Wiring helpers ──────────────────────────────────────────────────────
 const wiredHosts = new WeakSet();
 const wiredInner = new WeakMap();
@@ -281,17 +278,6 @@ function wirePlainListener(element, eventName, handler) {
 }
 
 // ─── Common handlers ─────────────────────────────────────────────────────
-async function handlePollIntervalChange(event) {
-  if (suppressEvents) return;
-  const pollIntervalEl = document.getElementById("poll-interval");
-  const rawValue = readValueFromEvent(event, pollIntervalEl?.value ?? "1");
-  const nextValue = clampPollInterval(readPositiveInt(rawValue, 1));
-  if (pollIntervalEl && String(pollIntervalEl.value) !== String(nextValue)) {
-    pollIntervalEl.value = nextValue;
-  }
-  await setSettings({ pollIntervalSec: nextValue });
-}
-
 async function handleWarnThresholdChange(event) {
   if (suppressEvents) return;
   const warnThresholdEl = document.getElementById("warn-threshold");
@@ -323,7 +309,6 @@ function extractSettings(value) {
 // config: { group, metrics, defaultMetric, normalizeSettings, updateVisibility, wireDeviceControls, applyDeviceSettings }
 function initPI(config) {
   const metricEl = document.getElementById("metric");
-  const pollIntervalEl = document.getElementById("poll-interval");
   const warnThresholdEl = document.getElementById("warn-threshold");
   const topThresholdEl = document.getElementById("top-threshold");
 
@@ -333,16 +318,6 @@ function initPI(config) {
     const normalized = config.normalizeSettings(settings);
     setOptions(metricEl, config.metrics);
     metricEl.value = normalized.metric;
-    // Apply poll interval
-    if (pollIntervalEl) {
-      const raw = settings && settings.pollIntervalSec !== undefined ? settings.pollIntervalSec : pollIntervalEl.value;
-      const nextValue = clampPollInterval(readPositiveInt(raw, 1));
-      if (String(pollIntervalEl.value) !== String(nextValue)) pollIntervalEl.value = nextValue;
-      const parsed = parseInt(raw, 10);
-      if (!Number.isFinite(parsed) || parsed < 1 || parsed > 5) {
-        void setSettings({ pollIntervalSec: nextValue });
-      }
-    }
     // Apply warn threshold
     if (warnThresholdEl) {
       const rawWarn = settings && settings.warnThreshold !== undefined ? settings.warnThreshold : "";
@@ -379,7 +354,6 @@ function initPI(config) {
 
   function wireAll() {
     wireInput(metricEl, handleMetricChange);
-    if (pollIntervalEl) wireInput(pollIntervalEl, handlePollIntervalChange);
     if (warnThresholdEl) wireInput(warnThresholdEl, handleWarnThresholdChange);
     if (topThresholdEl) wireInput(topThresholdEl, handleTopThresholdChange);
     if (config.wireDeviceControls) config.wireDeviceControls();
@@ -415,7 +389,6 @@ window.piCommon = {
   readCheckboxValueFromEvent,
   readValueFromEvent,
   readPositiveInt,
-  clampPollInterval,
   populateSelect,
   PERCENT_METRICS,
   TOP_PROCESS_METRICS,

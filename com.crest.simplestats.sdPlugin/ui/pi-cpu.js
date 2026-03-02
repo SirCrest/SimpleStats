@@ -6,6 +6,7 @@
     { value: "cpu-total", label: "Total Usage" },
     { value: "cpu-core", label: "Per-Core Usage" },
     { value: "cpu-peak", label: "Peak Core" },
+    { value: "cpu-freq", label: "Clock Frequency" },
     { value: "top-cpu", label: "Top Process (CPU)" }
   ];
 
@@ -41,7 +42,8 @@
       ? settings.cpuPerCore : candidateMetric === "cpu-core";
     let metric = DEFAULT_METRIC;
     if (candidateMetric === "cpu-peak" || candidateMetric === "top-cpu" ||
-        candidateMetric === "cpu-core" || candidateMetric === "cpu-total") {
+        candidateMetric === "cpu-core" || candidateMetric === "cpu-total" ||
+        candidateMetric === "cpu-freq") {
       metric = candidateMetric;
     } else {
       metric = cpuPerCore ? "cpu-core" : "cpu-total";
@@ -51,7 +53,6 @@
 
   function updateVisibility(metric) {
     setVisible(document.getElementById("cpu-core-row"), metric === "cpu-core");
-    setVisible(document.getElementById("poll-row"), true);
 
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);
