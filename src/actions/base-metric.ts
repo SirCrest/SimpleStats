@@ -877,11 +877,11 @@ function buildKeySvg(display: MetricDisplay, history: HistorySeries, group: Metr
       <rect width="${KEY_SIZE}" height="${KEY_SIZE}" rx="10" fill="${baseStyle.background}" />
       <text x="${TEXT_LEFT}" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
         font-size="9" font-weight="600" fill="${labelColor}"${textLengthAttrs(display.label)}>${label}</text>${display.labelArrow === "up" ? `
-      <path d="M29 2 L32.5 6 L30.5 6 L30.5 9 L27.5 9 L27.5 6 L25.5 6 Z" fill="${labelColor}" />
-      <text x="35" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+      <path d="M33 2 L36.5 6 L34.5 6 L34.5 9 L31.5 9 L31.5 6 L29.5 6 Z" fill="${labelColor}" />
+      <text x="39" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
         font-size="9" font-weight="600" fill="${labelColor}">UP</text>` : ""}${display.labelArrow === "down" ? `
-      <path d="M29 9 L32.5 5 L30.5 5 L30.5 2 L27.5 2 L27.5 5 L25.5 5 Z" fill="${labelColor}" />
-      <text x="35" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
+      <path d="M33 9 L36.5 5 L34.5 5 L34.5 2 L31.5 2 L31.5 5 L29.5 5 Z" fill="${labelColor}" />
+      <text x="39" y="${LABEL_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
         font-size="9" font-weight="600" fill="${labelColor}">DOWN</text>` : ""}
       <text x="${TEXT_LEFT}" y="${VALUE_Y}" text-anchor="start" font-family="Segoe UI, Arial, sans-serif"
         font-size="${valueSize}" font-weight="700" fill="${valueColor}"${textLengthAttrs(display.value)}>${renderValueWithUnit(value, valueSize, valueColor)}</text>
@@ -1366,7 +1366,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     case "gpu-pcie-rx": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
       return {
-        label: labelWithIndex("GPU PCIE", gpu ? gpu.index : 0),
+        label: labelWithIndex("PCIE", gpu ? gpu.index : 0),
         labelArrow: "down",
         value: formatPcieRate(gpu?.pcieRxKBps ?? null),
         graphValue: gpu?.pcieRxKBps ?? null,
@@ -1378,7 +1378,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     case "gpu-pcie-tx": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
       return {
-        label: labelWithIndex("GPU PCIE", gpu ? gpu.index : 0),
+        label: labelWithIndex("PCIE", gpu ? gpu.index : 0),
         labelArrow: "up",
         value: formatPcieRate(gpu?.pcieTxKBps ?? null),
         graphValue: gpu?.pcieTxKBps ?? null,
