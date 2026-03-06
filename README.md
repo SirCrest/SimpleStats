@@ -1,58 +1,61 @@
 # SimpleStats for Stream Deck
 
-SimpleStats turns your Stream Deck keys into live system monitors for Windows, styled like compact Task Manager tiles.  
-You can mix CPU, GPU, memory, disk, network, and clock tiles across pages, then tune each key for exactly what you care about.
+SimpleStats turns your Stream Deck keys into live system monitors for Windows, styled like compact Task Manager tiles.
+Six dedicated actions — CPU, GPU, Memory, Disk, Network, and System — each with their own property inspector, so you can drag exactly what you need onto any key and configure it in seconds.
 
 ![SimpleStats preview](docs/images/simplestats-preview.png)
 
 ## What You Get
-- Live stat tiles with a mini trend graph per key.
-- One flexible action (`Metric Display`) that can show many metric types.
-- Per-device selectors (GPU, disk, and network interface) where relevant.
-- Alert and idle thresholds for quick visual attention.
-- Top-process views with process name and icon for quick attribution.
+- Live stat tiles with a mini trend graph per key (60s history, Task Manager-style crawl-from-right fill).
+- Six dedicated actions — one per device group — with color-themed icons.
+- Per-device selectors (GPU, disk, network interface) where relevant.
+- Alert threshold for percent-based metrics (highlights in red when exceeded).
+- Idle threshold for top-process metrics (shows `IDLE` below your floor to reduce noise).
+- Top-process views with process name and large watermark app icon.
+- Always-on background history: graph data kept alive for 8 hours across page switches.
 
 ## Quick Start
-1. Install the plugin (`.streamDeckPlugin`) from this repo/release.
-2. In Stream Deck, drag **SimpleStats -> Metric Display** onto a key.
-3. Open the Property Inspector and configure it using the flow below.
+1. Install the plugin (`.streamDeckPlugin`) from the [latest release](../../releases/latest).
+2. In Stream Deck, drag one of the six **SimpleStats** actions onto a key:
+   - **CPU**, **GPU**, **Memory**, **Disk**, **Network**, or **System**
+3. Open the Property Inspector and pick a metric.
 
-## Configure A Key (In Order)
-1. `Device`
-Select the metric group: `CPU`, `GPU`, `Memory`, `Disk`, `Network`, or `System`.
+## Configure A Key
+1. **Metric** — Choose the specific metric for that device group.
 
-2. `Metric`
-Choose the specific metric inside that group.
+2. **Source Selector** (shown when needed)
+   `CPU`: optional per-core mode + core number picker.
+   `GPU`: GPU dropdown (multi-GPU systems).
+   `Disk`: disk dropdown + rescan button, or "Auto (Most Active)" to follow the busiest drive.
+   `Network`: interface dropdown + rescan button, or "All" for aggregate.
 
-3. `Source Selector` (shown when needed)
-`CPU`: optional per-core mode + core number picker.  
-`GPU`: GPU dropdown.  
-`Disk`: disk dropdown + rescan button.  
-`Network`: interface dropdown + rescan button.
+3. **Alert %** (percent metrics only) — Set a threshold to highlight high usage in red.
 
-4. `Polling`
-Set update speed from `1` to `5` seconds (when applicable).
-
-5. `Alert %` (percent metrics only)
-Set a threshold to highlight high usage.
-
-6. `Idle below` (top-process metrics only)
-Show `IDLE` when top-process activity is below your chosen threshold.
+4. **Idle below** (top-process metrics only) — Show `IDLE` when activity is below your chosen threshold.
 
 ## Metrics By Group
 
 ### CPU
 - `Total Usage`
-- `Per-Core Usage`
-- `Peak Core`
+- `Per-Core Usage` (select core)
+- `Peak Core` (highest core load)
+- `Clock Frequency` (average GHz across all cores)
 - `Top Process (CPU)`
 
-### GPU
+### GPU (NVIDIA, via NVML)
 - `Core Usage`
 - `VRAM Usage (%)`
 - `VRAM Used (GB)`
 - `Temperature (C)`
 - `Power (W)`
+- `Core Clock (MHz)`
+- `Memory Clock (MHz)`
+- `Encoder (NVENC %)`
+- `Decoder (NVDEC %)`
+- `Fan Speed (%)`
+- `PCIe Download (MB/s)`
+- `PCIe Upload (MB/s)`
+- `Throttle Status` (HW THERM, PWR CAP, SYNC, NONE, etc.)
 - `Top Process (Compute)`
 
 ### Memory
@@ -62,11 +65,14 @@ Show `IDLE` when top-process activity is below your chosen threshold.
 - `Top Process (%)`
 
 ### Disk
-- `Utilization (Active)`
+- `Utilization (Active)` — per-drive active time
 - `% Used`
 - `% Free`
 - `Read Throughput (MB/s)`
 - `Write Throughput (MB/s)`
+- `Top Process (I/O MB/s)`
+
+Disk supports "Auto (Most Active)" to automatically follow the busiest drive, with independent graph history per disk.
 
 ### Network
 - `Upload Rate (Mbps)`
@@ -75,22 +81,29 @@ Show `IDLE` when top-process activity is below your chosen threshold.
 
 ### System
 - `Clock (HH:MM:SS)`
+- `Performance` (rolling 60s tick stats, CPU%, heap — for plugin diagnostics)
 
-## Niche Features (Useful In Real Use)
-- `Top-process mode`: top CPU/memory/GPU-compute metrics can show process name and app icon.
-- `Idle gating`: top-process metrics can intentionally display `IDLE` below your threshold to reduce noise.
-- `Transfer windows`: network totals support 1m/1h/24h rollups and can target a single interface or all interfaces.
-- `Disk space cadence`: `% Used` and `% Free` are refreshed on a slower cycle (about 60s), since capacity changes slowly.
-- `Interface hygiene`: loopback/internal adapters are filtered from network interface choices.
-- `Legacy key safety`: old SimpleStats actions are still recognized so existing profiles keep working.
+## Niche Features
+- **Top-process mode**: CPU, memory, GPU compute, and disk I/O metrics show the top process name with a large faded app icon watermark.
+- **Idle gating**: top-process metrics display `IDLE` below your threshold to cut noise.
+- **Transfer windows**: network totals support 60s / 1h / 24h rollups, per-interface or all.
+- **Auto disk selection**: "Auto (Most Active)" follows the busiest drive with per-disk graph history.
+- **Disk space cadence**: `% Used` and `% Free` refresh on a slower cycle (~60s) since capacity changes slowly.
+- **Interface hygiene**: loopback and internal adapters are filtered from network interface choices.
+- **Graph fill gradient**: vertical gradient that's brighter near the line and fades toward the baseline.
+- **N/A for unsupported GPU fields**: advanced GPU metrics show `N/A` when the driver doesn't expose a field, instead of `--`.
+- **Network history persistence**: total transfer history survives Stream Deck restarts (minute-resolution, 24h).
 
 ## Compatibility
 - Windows `10` or newer (minimum Windows 10 build `10240`)
 - Stream Deck `6.9+`
+- NVIDIA GPU required for GPU metrics (NVML-compatible drivers)
 
 If Windows is below the required version, keys show `WIN10+ REQ`.
 
 ## Notes
+- All keys update at a 1-second cadence.
 - Network transfer totals are only recorded while the Stream Deck app/plugin is running.
-- Metrics generally show `--` when data is temporarily unavailable.
+- Metrics show `--` when data is temporarily unavailable.
 - Network totals can show `0B` until at least two samples exist for the selected window.
+- Graph history resets if the Stream Deck app is fully closed.
