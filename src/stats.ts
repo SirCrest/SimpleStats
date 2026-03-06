@@ -513,7 +513,7 @@ function parseNumberFromUnknown(value: unknown): number | null {
   return null;
 }
 
-type StopReason = "manual" | "startup-timeout" | "stale-timeout" | "child-error" | "spawn-failed" | "unexpected-exit";
+type StopReason = "manual" | "startup-timeout" | "stale-timeout" | "child-error" | "spawn-failed" | "unexpected-exit" | "system-exit";
 type HelperLifecycleState = "idle" | "starting" | "running" | "stopping" | "backoff" | "disabled";
 let helperInvalidItemsTypeLogged = false;
 
@@ -611,8 +611,11 @@ class SimpleStatsHelper {
     child.on("exit", (code, signal) => {
       const pid = child.pid ?? null;
       const expectedByPid = pid !== null && this.expectedExitPid === pid;
-      const expected = expectedByPid || this.lifecycleState === "stopping";
-      const reason = expected ? this.lastStopReason : "unexpected-exit";
+      const systemExit = code === 0x40010004; // STATUS_LOG_HARD_ERROR (logoff/sleep/console close)
+      const expected = expectedByPid || this.lifecycleState === "stopping" || systemExit;
+      const reason = expected
+        ? (this.lastStopReason || (systemExit ? "system-exit" : "unexpected-exit"))
+        : "unexpected-exit";
       if (expectedByPid) {
         this.expectedExitPid = null;
       }

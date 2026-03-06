@@ -211,17 +211,8 @@ function readPositiveInt(value, fallback) {
 
 // ─── Wiring helpers ──────────────────────────────────────────────────────
 const wiredHosts = new WeakSet();
-const wiredInner = new WeakMap();
 const wiredButtonTargets = new WeakMap();
 const wiredPlainListeners = new WeakMap();
-
-function getInnerControl(element) {
-  if (!element) return null;
-  if (element.focusElement instanceof HTMLElement) return element.focusElement;
-  const root = element.shadowRoot;
-  if (!root) return null;
-  return root.querySelector("select, input, textarea");
-}
 
 function getInnerButton(element) {
   if (!element) return null;
@@ -234,17 +225,10 @@ function getInnerButton(element) {
 function wireInput(element, handler) {
   if (!element) return;
   if (!wiredHosts.has(element)) {
+    // Bind once to the host element so Stream Deck's custom controls do not
+    // double-fire through both the wrapper and their inner shadow DOM input.
     element.addEventListener("change", handler);
-    element.addEventListener("input", handler);
     wiredHosts.add(element);
-  }
-  const inner = getInnerControl(element);
-  if (inner && inner !== wiredInner.get(element)) {
-    wiredInner.set(element, inner);
-    inner.addEventListener("change", handler);
-    inner.addEventListener("input", handler);
-  } else if (!inner) {
-    requestAnimationFrame(() => wireInput(element, handler));
   }
 }
 

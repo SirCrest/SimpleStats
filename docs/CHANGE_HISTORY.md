@@ -1,5 +1,14 @@
 # Change History
 
+## v0.11.2.0 (2026-03-06)
+
+- Fixed settings feedback loop: `saveDeviceCacheToSettings()` now compares new device cache against existing via `JSON.stringify` and skips `setSettings()` when unchanged, breaking the PI ↔ plugin `didReceiveSettings` cycle
+- Fixed helper exit misclassification: exit code `0x40010004` (STATUS_LOG_HARD_ERROR from system sleep/logoff) is now treated as an expected exit, avoiding unnecessary backoff/retry
+- Added `"system-exit"` to `StopReason` type in stats.ts
+- Fixed property inspector metric reverts: GPU and other PI metric changes no longer bounce between old/new values due to overlapping SDK auto-binding and manual settings writes
+- Removed `setting="..."` auto-binding from manually managed PI controls and simplified shared PI wiring to a single host-level `change` listener
+- Advanced GPU metrics now show `N/A` instead of `--` when the GPU is present but the current driver/GPU does not expose that NVML field
+
 ## v0.11.0.0 (2026-03-02)
 
 - Added CPU Clock Frequency metric (`cpu-freq`): average MHz across all cores via `CallNtPowerInformation`, displayed as GHz/MHz with auto-scaling graph

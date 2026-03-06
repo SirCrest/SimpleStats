@@ -557,6 +557,7 @@ internal sealed class NvidiaGpuSampler
   private const int NVML_SUCCESS = 0;
   private const int NVML_ERROR_INSUFFICIENT_SIZE = 7;
   private const uint NVML_TEMPERATURE_GPU = 0;
+  private static readonly HashSet<string> _loggedNvmlErrors = new();
 
   [StructLayout(LayoutKind.Sequential)]
   private struct NvmlUtilization
@@ -880,50 +881,55 @@ internal sealed class NvidiaGpuSampler
   {
     try
     {
-      if (nvmlDeviceGetClockInfo(handle, NVML_CLOCK_GRAPHICS, out var mhz) != NVML_SUCCESS) return null;
+      var result = nvmlDeviceGetClockInfo(handle, NVML_CLOCK_GRAPHICS, out var mhz);
+      if (result != NVML_SUCCESS) { if (_loggedNvmlErrors.Add("clockGraphics")) Console.Error.WriteLine($"NVML clockGraphics failed: {result}"); return null; }
       return mhz;
     }
-    catch (EntryPointNotFoundException) { return null; }
+    catch (EntryPointNotFoundException) { if (_loggedNvmlErrors.Add("clockGraphics")) Console.Error.WriteLine("NVML clockGraphics: EntryPointNotFound"); return null; }
   }
 
   private static uint? TryGetClockMem(IntPtr handle)
   {
     try
     {
-      if (nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM, out var mhz) != NVML_SUCCESS) return null;
+      var result = nvmlDeviceGetClockInfo(handle, NVML_CLOCK_MEM, out var mhz);
+      if (result != NVML_SUCCESS) { if (_loggedNvmlErrors.Add("clockMem")) Console.Error.WriteLine($"NVML clockMem failed: {result}"); return null; }
       return mhz;
     }
-    catch (EntryPointNotFoundException) { return null; }
+    catch (EntryPointNotFoundException) { if (_loggedNvmlErrors.Add("clockMem")) Console.Error.WriteLine("NVML clockMem: EntryPointNotFound"); return null; }
   }
 
   private static uint? TryGetEncoderUtil(IntPtr handle)
   {
     try
     {
-      if (nvmlDeviceGetEncoderUtilization(handle, out var util, out _) != NVML_SUCCESS) return null;
+      var result = nvmlDeviceGetEncoderUtilization(handle, out var util, out _);
+      if (result != NVML_SUCCESS) { if (_loggedNvmlErrors.Add("encoder")) Console.Error.WriteLine($"NVML encoder failed: {result}"); return null; }
       return util;
     }
-    catch (EntryPointNotFoundException) { return null; }
+    catch (EntryPointNotFoundException) { if (_loggedNvmlErrors.Add("encoder")) Console.Error.WriteLine("NVML encoder: EntryPointNotFound"); return null; }
   }
 
   private static uint? TryGetDecoderUtil(IntPtr handle)
   {
     try
     {
-      if (nvmlDeviceGetDecoderUtilization(handle, out var util, out _) != NVML_SUCCESS) return null;
+      var result = nvmlDeviceGetDecoderUtilization(handle, out var util, out _);
+      if (result != NVML_SUCCESS) { if (_loggedNvmlErrors.Add("decoder")) Console.Error.WriteLine($"NVML decoder failed: {result}"); return null; }
       return util;
     }
-    catch (EntryPointNotFoundException) { return null; }
+    catch (EntryPointNotFoundException) { if (_loggedNvmlErrors.Add("decoder")) Console.Error.WriteLine("NVML decoder: EntryPointNotFound"); return null; }
   }
 
   private static uint? TryGetFanSpeed(IntPtr handle)
   {
     try
     {
-      if (nvmlDeviceGetFanSpeed(handle, out var speed) != NVML_SUCCESS) return null;
+      var result = nvmlDeviceGetFanSpeed(handle, out var speed);
+      if (result != NVML_SUCCESS) { if (_loggedNvmlErrors.Add("fan")) Console.Error.WriteLine($"NVML fan failed: {result}"); return null; }
       return speed;
     }
-    catch (EntryPointNotFoundException) { return null; }
+    catch (EntryPointNotFoundException) { if (_loggedNvmlErrors.Add("fan")) Console.Error.WriteLine("NVML fan: EntryPointNotFound"); return null; }
   }
 
   private static (uint? rxKBps, uint? txKBps) TryGetPcieThroughput(IntPtr handle)
@@ -931,21 +937,26 @@ internal sealed class NvidiaGpuSampler
     try
     {
       uint? rx = null, tx = null;
-      if (nvmlDeviceGetPcieThroughput(handle, NVML_PCIE_UTIL_RX_BYTES, out var rxVal) == NVML_SUCCESS) rx = rxVal;
-      if (nvmlDeviceGetPcieThroughput(handle, NVML_PCIE_UTIL_TX_BYTES, out var txVal) == NVML_SUCCESS) tx = txVal;
+      var rxResult = nvmlDeviceGetPcieThroughput(handle, NVML_PCIE_UTIL_RX_BYTES, out var rxVal);
+      if (rxResult == NVML_SUCCESS) rx = rxVal;
+      else if (_loggedNvmlErrors.Add("pcieRx")) Console.Error.WriteLine($"NVML pcieRx failed: {rxResult}");
+      var txResult = nvmlDeviceGetPcieThroughput(handle, NVML_PCIE_UTIL_TX_BYTES, out var txVal);
+      if (txResult == NVML_SUCCESS) tx = txVal;
+      else if (_loggedNvmlErrors.Add("pcieTx")) Console.Error.WriteLine($"NVML pcieTx failed: {txResult}");
       return (rx, tx);
     }
-    catch (EntryPointNotFoundException) { return (null, null); }
+    catch (EntryPointNotFoundException) { if (_loggedNvmlErrors.Add("pcie")) Console.Error.WriteLine("NVML pcie: EntryPointNotFound"); return (null, null); }
   }
 
   private static ulong? TryGetThrottleReasons(IntPtr handle)
   {
     try
     {
-      if (nvmlDeviceGetCurrentClocksThrottleReasons(handle, out var reasons) != NVML_SUCCESS) return null;
+      var result = nvmlDeviceGetCurrentClocksThrottleReasons(handle, out var reasons);
+      if (result != NVML_SUCCESS) { if (_loggedNvmlErrors.Add("throttle")) Console.Error.WriteLine($"NVML throttle failed: {result}"); return null; }
       return reasons;
     }
-    catch (EntryPointNotFoundException) { return null; }
+    catch (EntryPointNotFoundException) { if (_loggedNvmlErrors.Add("throttle")) Console.Error.WriteLine("NVML throttle: EntryPointNotFound"); return null; }
   }
 
   private static long? ToLong(ulong value)

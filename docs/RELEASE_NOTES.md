@@ -1,5 +1,19 @@
 # Release Notes
 
+## v0.11.2.0
+
+### Bug fixes
+
+- **Fixed settings feedback loop**: opening a property inspector no longer triggers a continuous `didReceiveSettings` / `savedDeviceCache` cycle. The device cache write is now skipped when the cache is unchanged, eliminating ~22k unnecessary events observed over a 26-hour session.
+- **Fixed helper exit on system sleep/logoff**: the .NET helper exiting with `0x40010004` (STATUS_LOG_HARD_ERROR) during system sleep or logoff is now recognized as an expected exit, preventing unnecessary backoff and retry cycles.
+- **Fixed property inspector metric reverts**: GPU metric changes no longer bounce back to the previous value because the property inspectors now use a single settings-writer path instead of overlapping SDK auto-binding plus manual JS persistence.
+- **Clarified unsupported advanced GPU metrics**: when a GPU is present but NVML does not expose a specific advanced field (clock, encoder/decoder, fan, PCIe throughput, throttle status), the key now shows `N/A` instead of an ambiguous `--`.
+
+### Details
+
+- Removed `setting="..."` auto-binding from manually managed PI controls so dropdowns and numeric fields persist through one consistent code path.
+- Simplified shared PI event wiring to a single host-level `change` listener for Stream Deck custom controls, reducing duplicate/out-of-order settings writes.
+
 ## v0.11.0.0
 
 ### New metrics

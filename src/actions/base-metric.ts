@@ -1128,6 +1128,15 @@ function selectGpu(snapshot: StatsSnapshot, index: number): GpuSnapshot | null {
   return snapshot.gpus[index];
 }
 
+function formatGpuAdvancedMetric(
+  gpu: GpuSnapshot | null,
+  value: number | null,
+  formatter: (value: number | null) => string
+): string {
+  if (gpu && (value === null || !Number.isFinite(value))) return "N/A";
+  return formatter(value);
+}
+
 function selectDisk(snapshot: StatsSnapshot, diskId: string): DiskSnapshot | null {
   if (snapshot.disks.length === 0) return null;
   if (diskId) {
@@ -1310,10 +1319,11 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-clock": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const clockMHz = gpu?.clockMHz ?? null;
       return {
         label: labelWithIndex("GPU CLK", gpu ? gpu.index : 0),
-        value: formatFreqMHz(gpu?.clockMHz ?? null),
-        graphValue: gpu?.clockMHz ?? null,
+        value: formatGpuAdvancedMetric(gpu, clockMHz, formatFreqMHz),
+        graphValue: clockMHz,
         graphMax: null,
         graphMinMax: null,
         graphMin: 0
@@ -1321,10 +1331,11 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-mem-clock": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const memClockMHz = gpu?.memClockMHz ?? null;
       return {
         label: labelWithIndex("GPU MCLK", gpu ? gpu.index : 0),
-        value: formatFreqMHz(gpu?.memClockMHz ?? null),
-        graphValue: gpu?.memClockMHz ?? null,
+        value: formatGpuAdvancedMetric(gpu, memClockMHz, formatFreqMHz),
+        graphValue: memClockMHz,
         graphMax: null,
         graphMinMax: null,
         graphMin: 0
@@ -1332,10 +1343,11 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-encoder": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const encoderPct = gpu?.encoderPct ?? null;
       return {
         label: labelWithIndex("GPU ENC", gpu ? gpu.index : 0),
-        value: formatPercent(gpu?.encoderPct ?? null),
-        graphValue: gpu?.encoderPct ?? null,
+        value: formatGpuAdvancedMetric(gpu, encoderPct, formatPercent),
+        graphValue: encoderPct,
         graphMax: 100,
         graphMinMax: null,
         graphMin: 0
@@ -1343,10 +1355,11 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-decoder": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const decoderPct = gpu?.decoderPct ?? null;
       return {
         label: labelWithIndex("GPU DEC", gpu ? gpu.index : 0),
-        value: formatPercent(gpu?.decoderPct ?? null),
-        graphValue: gpu?.decoderPct ?? null,
+        value: formatGpuAdvancedMetric(gpu, decoderPct, formatPercent),
+        graphValue: decoderPct,
         graphMax: 100,
         graphMinMax: null,
         graphMin: 0
@@ -1354,10 +1367,11 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-fan": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const fanPct = gpu?.fanPct ?? null;
       return {
         label: labelWithIndex("GPU FAN", gpu ? gpu.index : 0),
-        value: formatPercent(gpu?.fanPct ?? null),
-        graphValue: gpu?.fanPct ?? null,
+        value: formatGpuAdvancedMetric(gpu, fanPct, formatPercent),
+        graphValue: fanPct,
         graphMax: 100,
         graphMinMax: null,
         graphMin: 0
@@ -1365,11 +1379,12 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-pcie-rx": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const pcieRxKBps = gpu?.pcieRxKBps ?? null;
       return {
         label: labelWithIndex("PCIE", gpu ? gpu.index : 0),
         labelArrow: "down",
-        value: formatPcieRate(gpu?.pcieRxKBps ?? null),
-        graphValue: gpu?.pcieRxKBps ?? null,
+        value: formatGpuAdvancedMetric(gpu, pcieRxKBps, formatPcieRate),
+        graphValue: pcieRxKBps,
         graphMax: null,
         graphMinMax: 10,
         graphMin: 0
@@ -1377,11 +1392,12 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-pcie-tx": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const pcieTxKBps = gpu?.pcieTxKBps ?? null;
       return {
         label: labelWithIndex("PCIE", gpu ? gpu.index : 0),
         labelArrow: "up",
-        value: formatPcieRate(gpu?.pcieTxKBps ?? null),
-        graphValue: gpu?.pcieTxKBps ?? null,
+        value: formatGpuAdvancedMetric(gpu, pcieTxKBps, formatPcieRate),
+        graphValue: pcieTxKBps,
         graphMax: null,
         graphMinMax: 10,
         graphMin: 0
@@ -1390,11 +1406,12 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     case "gpu-throttle": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
       const reasons = gpu?.throttleReasons ?? null;
-      const isThrottled = reasons !== null && reasons !== 0;
+      const hasReasons = reasons !== null && Number.isFinite(reasons);
+      const isThrottled = hasReasons && reasons !== 0;
       return {
         label: labelWithIndex("GPU THR", gpu ? gpu.index : 0),
-        value: formatThrottle(reasons),
-        graphValue: isThrottled ? 100 : 0,
+        value: gpu && !hasReasons ? "N/A" : formatThrottle(reasons),
+        graphValue: hasReasons ? (isThrottled ? 100 : 0) : null,
         graphMax: 100,
         graphMinMax: null,
         graphMin: 0
@@ -2048,7 +2065,15 @@ export class BaseMetricAction extends SingletonAction<Settings> {
           vramTotal: gpu?.vramTotal ?? null,
           tempC: gpu?.tempC ?? null,
           powerW: gpu?.powerW ?? null,
-          name: gpu?.name ?? null
+          name: gpu?.name ?? null,
+          clockMHz: gpu?.clockMHz ?? null,
+          memClockMHz: gpu?.memClockMHz ?? null,
+          encoderPct: gpu?.encoderPct ?? null,
+          decoderPct: gpu?.decoderPct ?? null,
+          fanPct: gpu?.fanPct ?? null,
+          pcieRxKBps: gpu?.pcieRxKBps ?? null,
+          pcieTxKBps: gpu?.pcieTxKBps ?? null,
+          throttleReasons: gpu?.throttleReasons ?? null,
         });
         writeDebugLog("gpuSnapshot", {
           actionId: actionInstance.id,
@@ -2060,7 +2085,15 @@ export class BaseMetricAction extends SingletonAction<Settings> {
           vramTotal: gpu?.vramTotal ?? null,
           tempC: gpu?.tempC ?? null,
           powerW: gpu?.powerW ?? null,
-          name: gpu?.name ?? null
+          name: gpu?.name ?? null,
+          clockMHz: gpu?.clockMHz ?? null,
+          memClockMHz: gpu?.memClockMHz ?? null,
+          encoderPct: gpu?.encoderPct ?? null,
+          decoderPct: gpu?.decoderPct ?? null,
+          fanPct: gpu?.fanPct ?? null,
+          pcieRxKBps: gpu?.pcieRxKBps ?? null,
+          pcieTxKBps: gpu?.pcieTxKBps ?? null,
+          throttleReasons: gpu?.throttleReasons ?? null,
         });
       }
       if (state.settings.group === "disk") {
@@ -2128,6 +2161,13 @@ export class BaseMetricAction extends SingletonAction<Settings> {
       const netIfaces = buildDataSourceItems("getNetIfaces", snapshot);
 
       const currentSettings = await action.getSettings();
+      const existing = (currentSettings as any)._deviceCache;
+      if (existing &&
+          JSON.stringify(existing.gpus) === JSON.stringify(gpus) &&
+          JSON.stringify(existing.disks) === JSON.stringify(disks) &&
+          JSON.stringify(existing.netIfaces) === JSON.stringify(netIfaces)) {
+        return; // Cache unchanged — skip write to avoid feedback loop
+      }
       const newSettings = {
         ...currentSettings,
         _deviceCache: { gpus, disks, netIfaces }
