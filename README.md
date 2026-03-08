@@ -24,7 +24,7 @@ Some metrics show additional options:
 |--------|-------------|
 | Total Usage | Overall CPU load |
 | Usage (Per-Core) | Single core with core picker |
-| Usage (Peak Core) | Hottest core, labeled dynamically (e.g. `PEAK: C7`) |
+| Usage (Peak Core) | Highest used core, labeled dynamically (e.g. `PEAK: C7`) |
 | Top Process | Highest CPU consumer with app icon |
 | Clock Frequency | Average speed across all cores (GHz) |
 
@@ -48,10 +48,10 @@ Some metrics show additional options:
 ### Memory
 | Metric | Description |
 |--------|-------------|
-| Usage (%) | Total RAM utilization |
-| Used (GB) | RAM in use |
-| Top Process (GB) | Largest memory consumer (absolute) |
-| Top Process (%) | Largest memory consumer (relative) |
+| Usage (%) |  |
+| Used (GB) |  |
+| Top Process (GB) | Largest memory consumer |
+| Top Process (%) | Largest memory consumer |
 
 ### Disk
 | Metric | Description |
