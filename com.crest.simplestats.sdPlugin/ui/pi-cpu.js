@@ -11,6 +11,10 @@
     { value: "cpu-freq", label: "Clock Frequency" }
   ];
 
+  const METRIC_NOTES = {
+    "cpu-freq": "Average clock speed across all cores. Individual cores may boost higher."
+  };
+
   const DEFAULT_METRIC = "cpu-total";
 
   let maxCpuCore = getDefaultCpuCoreMax();
@@ -54,6 +58,11 @@
 
   function updateVisibility(metric) {
     setVisible(document.getElementById("cpu-core-row"), metric === "cpu-core");
+    const note = METRIC_NOTES[metric] || null;
+    const noteRow = document.getElementById("metric-note");
+    const noteText = document.getElementById("metric-note-text");
+    if (noteRow) setVisible(noteRow, !!note);
+    if (noteText) noteText.textContent = note || "";
 
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);

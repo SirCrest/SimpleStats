@@ -11,6 +11,10 @@
     { value: "top-disk", label: "Top Process (I/O)" }
   ];
 
+  const METRIC_NOTES = {
+    "disk-activity": "Percentage of time the disk is busy processing requests. Same as Active Time in Task Manager."
+  };
+
   const DEFAULT_METRIC = "disk-activity";
 
   function normalizeSettings(settings) {
@@ -25,6 +29,11 @@
     const isDiskSpace = metric === "disk-used" || metric === "disk-free";
     setVisible(document.getElementById("disk-row"), !isTopDisk);
     setVisible(document.getElementById("disk-space-note"), isDiskSpace);
+    const note = METRIC_NOTES[metric] || null;
+    const noteRow = document.getElementById("metric-note");
+    const noteText = document.getElementById("metric-note-text");
+    if (noteRow) setVisible(noteRow, !!note);
+    if (noteText) noteText.textContent = note || "";
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);
     setVisible(document.getElementById("threshold-note"), isPercent);

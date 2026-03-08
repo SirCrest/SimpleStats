@@ -2004,6 +2004,12 @@ export class BaseMetricAction extends SingletonAction<Settings> {
         } else {
           existing.history.setMaxPoints(historyPointsForInterval(1));
           existing.history.clear();
+          // Backfill from global snapshots so switching metrics still shows
+          // a pre-populated graph instead of starting empty.
+          for (const snap of globalSnapshots) {
+            const display = buildMetricDisplay(snap, normalized);
+            existing.history.push(display.graphValue);
+          }
         }
       }
       existing.cacheKey = nextCacheKey;

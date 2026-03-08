@@ -7,16 +7,24 @@
     { value: "gpu-vram-used", label: "VRAM (GB)" },
     { value: "gpu-temp", label: "Temperature" },
     { value: "gpu-power", label: "Power (W)" },
-    { value: "gpu-top-compute", label: "Top Process (Compute)" },
+    { value: "gpu-top-compute", label: "Top Process (GPU %)" },
     { separator: true },
     { value: "gpu-encoder", label: "Encoder (%)" },
     { value: "gpu-decoder", label: "Decoder (%)" },
-    { value: "gpu-pcie-rx", label: "PCIe Download" },
-    { value: "gpu-pcie-tx", label: "PCIe Upload" },
+    { value: "gpu-pcie-rx", label: "PCIe Download (CPU \u2192 GPU)" },
+    { value: "gpu-pcie-tx", label: "PCIe Upload (GPU \u2192 CPU)" },
     { value: "gpu-clock", label: "Core Clock (MHz)" },
     { value: "gpu-mem-clock", label: "VRAM Clock (Effective MHz)" },
     { value: "gpu-fan", label: "Fan Speed (%)" }
   ];
+
+  const METRIC_NOTES = {
+    "gpu-encoder": "NVENC usage. Hardware encoder block on NVIDIA GPUs. Same encoder used by Shadowplay.",
+    "gpu-decoder": "NVDEC usage. Hardware decoder block on NVIDIA GPUs used for real-time video decoding.",
+    "gpu-pcie-rx": "Data flowing from the CPU/system into the GPU over the PCIe bus.",
+    "gpu-pcie-tx": "Data flowing from the GPU back to the CPU/system over the PCIe bus.",
+    "gpu-mem-clock": "Reports effective data rate. GDDR memory is multi-pumped, so this value is higher than the base clock."
+  };
 
   const DEFAULT_METRIC = "gpu-load";
 
@@ -29,9 +37,14 @@
   function updateVisibility(metric) {
     setVisible(document.getElementById("gpu-row"), true);
     setVisible(document.getElementById("temp-unit-row"), metric === "gpu-temp");
-    const isPercent = PERCENT_METRICS.has(metric);
-    setVisible(document.getElementById("warn-threshold-row"), isPercent);
-    setVisible(document.getElementById("threshold-note"), isPercent);
+    const note = METRIC_NOTES[metric] || null;
+    const noteRow = document.getElementById("metric-note");
+    const noteText = document.getElementById("metric-note-text");
+    if (noteRow) setVisible(noteRow, !!note);
+    if (noteText) noteText.textContent = note || "";
+    const showAlert = PERCENT_METRICS.has(metric) && !METRIC_NOTES[metric];
+    setVisible(document.getElementById("warn-threshold-row"), showAlert);
+    setVisible(document.getElementById("threshold-note"), showAlert);
     const isTopProcess = TOP_PROCESS_METRICS.has(metric);
     setVisible(document.getElementById("top-threshold-row"), isTopProcess);
     setVisible(document.getElementById("top-threshold-note"), isTopProcess);
