@@ -2,6 +2,7 @@
 
 ## v0.12.0.0 (2026-03-07)
 
+- Global snapshot history: poller now polls all helper-backed groups whenever any group is active; 60-entry snapshot ring buffer seeds new keys with backfilled graph data on first appear
 - Fixed property inspector metric selection propagation for Stream Deck `sdpi-*` controls: selecting GPU metrics such as `gpu-encoder` now reaches the action again instead of leaving the key on the old metric
 - Updated shared PI wiring to attach a single `change` listener to the inner native form control (`input` / `select` / `textarea`) instead of the custom element host
 - Added a bounded retry when Stream Deck custom control shadow DOM is not ready on the first frame, preserving the single-writer PI design without reintroducing duplicate settings writes

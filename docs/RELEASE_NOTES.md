@@ -7,6 +7,10 @@
 - **Fixed GPU metric selection regression in the property inspector**: selecting metrics such as Encoder now applies correctly again instead of leaving the key on the previous metric.
 - **Fixed graph history reset on temperature unit switch**: toggling between °C and °F no longer clears the graph — the unit is a display-only setting excluded from the history cache key.
 
+### Improvements
+
+- **Global snapshot history**: all metric groups are now polled whenever any key is active, and snapshots are stored in a 60-point ring buffer. When a new key appears on any page, its graph is instantly backfilled from stored data — no more empty graphs when switching pages or adding keys after the plugin has been running.
+
 ### UI improvements
 
 - **GPU temperature unit toggle**: segmented button (°C / °F) appears when Temperature is selected. Defaults to °C. Graph stays the same — only the displayed value converts.
@@ -29,6 +33,8 @@
 - Added segmented button group CSS component (`.btn-group`) reusable across all property inspectors.
 - `setOptions()` in pi-common.js now supports `{ separator: true }` entries for dropdown grouping.
 - `tempUnit` setting added to base-metric.ts; stored as `"C"` or `"F"`, defaults to `"C"`. Graph data always stored in Celsius internally.
+- Poller now polls all helper-backed groups whenever any group is active, so data accumulates for keys on other pages.
+- Global snapshot ring buffer (60 entries) seeds new keys via `buildMetricDisplay` replay on first appear.
 
 ## v0.11.2.0
 

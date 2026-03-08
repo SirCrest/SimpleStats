@@ -257,6 +257,11 @@ const HISTORY_CACHE_MAX = 200;
 const historyCache = new Map<string, HistoryCacheEntry>();
 const BACKGROUND_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours — keeps history alive across realistic Stream Deck sessions
 
+// Global snapshot ring buffer — stores the last 60 snapshots so new keys
+// can backfill their graph history from data collected before they appeared.
+const GLOBAL_SNAPSHOT_MAX = 60;
+const globalSnapshots: StatsSnapshot[] = [];
+
 type BackgroundState = {
   settings: NormalizedSettings;
   settingsKey: string;
@@ -564,6 +569,29 @@ function updateBackgroundState(state: BackgroundState, snapshot: StatsSnapshot, 
     lastSeen: now
   });
   pruneHistoryCache(now);
+}
+
+function pushGlobalSnapshot(snapshot: StatsSnapshot): void {
+  globalSnapshots.push(snapshot);
+  if (globalSnapshots.length > GLOBAL_SNAPSHOT_MAX) {
+    globalSnapshots.shift();
+  }
+}
+
+let globalSnapshotSubscribed = false;
+function ensureGlobalSnapshotSubscription(): void {
+  if (globalSnapshotSubscribed) return;
+  globalSnapshotSubscribed = true;
+  statsPoller.subscribe(pushGlobalSnapshot);
+}
+
+function seedHistoryFromGlobal(state: ActionState): void {
+  if (state.history.getValues().some((v) => v !== null)) return;
+  if (globalSnapshots.length === 0) return;
+  for (const snap of globalSnapshots) {
+    const display = buildMetricDisplay(snap, state.settings);
+    state.history.push(display.graphValue);
+  }
 }
 
 function ensureBackgroundSubscription(): void {
@@ -1757,7 +1785,9 @@ export class BaseMetricAction extends SingletonAction<Settings> {
     const action = ev.action;
     const preGroup = normalizeSettings(this.mergeDeviceGroup(ev.payload.settings)).group;
     statsPoller.setInterest(action.id, preGroup);
+    ensureGlobalSnapshotSubscription();
     const { state } = this.getState(action, ev.payload.settings);
+    seedHistoryFromGlobal(state);
     this.bumpDebug(state);
     log.info("willAppear", {
       manifestId: action.manifestId,

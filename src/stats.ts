@@ -1375,7 +1375,10 @@ class StatsPoller {
   }
 
   private isGroupActive(group: MetricGroup): boolean {
-    return this.groupCounts[group] > 0;
+    if (this.groupCounts[group] > 0) return true;
+    // Poll all helper-backed groups whenever the helper is running so that
+    // data accumulates for keys on other pages before they become visible.
+    return this.isHelperBackedGroup(group) && this.hasHelperBackedInterest();
   }
 
   private start() {
