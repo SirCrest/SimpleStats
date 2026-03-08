@@ -17,7 +17,7 @@
 - **Network transfer period toggle**: replaced the dropdown with a 3-way segmented button (60s | 1h | 24h) matching the new button group style.
 - **Reorganized all PI metric dropdowns**: metrics grouped into basic and advanced sections with subtle separators. Most-used metrics appear first.
 - **Renamed metrics for consistency across all PIs**:
-  - GPU: "VRAM (%)", "VRAM (GB)", "Temperature", "Encoder (%)", "Decoder (%)", "Core Clock (MHz)", "VRAM Clock (Effective MHz)"
+  - GPU: "VRAM (%)", "VRAM (GB)", "Temperature", "Encoder (%)", "Decoder (%)", "Core Clock (MHz)", "VRAM Clock (Effective MHz)", "Fan Speed (%)"
   - CPU: "Usage (Per-Core)", "Usage (Peak Core)"
   - Memory: "Usage (%)" (dropped "Total")
   - Disk: "Used (%)", "Free (%)", "Read (MB/s)", "Write (MB/s)"
