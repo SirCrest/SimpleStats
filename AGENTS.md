@@ -25,7 +25,7 @@ Shared context file for all AI agents working on this repo. Read this before sta
 
 ### Codex
 **Branch:** `main`
-**Current focus:** None (Performance system metric + perf history log completed).
+**Current focus:** None (GPU PI metric selection propagation fix completed).
 
 **Files actively being modified:**
 - none

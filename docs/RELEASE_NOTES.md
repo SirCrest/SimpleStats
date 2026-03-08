@@ -1,6 +1,6 @@
 # Release Notes
 
-## v0.11.2.1
+## v0.12.0.0
 
 ### Bug fixes
 

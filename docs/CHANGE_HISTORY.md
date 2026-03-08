@@ -1,6 +1,6 @@
 # Change History
 
-## v0.11.2.1 (2026-03-07)
+## v0.12.0.0 (2026-03-07)
 
 - Fixed property inspector metric selection propagation for Stream Deck `sdpi-*` controls: selecting GPU metrics such as `gpu-encoder` now reaches the action again instead of leaving the key on the old metric
 - Updated shared PI wiring to attach a single `change` listener to the inner native form control (`input` / `select` / `textarea`) instead of the custom element host

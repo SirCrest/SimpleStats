@@ -3,7 +3,7 @@
   "Name": "SimpleStats",
   "Author": "Crest",
   "Description": "Task Manager-style system stats for Stream Deck keys.",
-  "Version": "0.11.2.0",
+  "Version": "0.12.0.0",
   "UUID": "com.crest.simplestats",
   "SDKVersion": 2,
   "Software": {
