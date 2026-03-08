@@ -1,108 +1,105 @@
 # SimpleStats for Stream Deck
 
-SimpleStats turns your Stream Deck keys into live system monitors for Windows, styled like compact Task Manager tiles.
-Six dedicated actions — CPU, GPU, Memory, Disk, Network, and System — each with their own property inspector, so you can drag exactly what you need onto any key and configure it in seconds.
+Real-time Windows system monitoring on your Stream Deck. Each key becomes a live tile — graph, value, and label — styled like a compact Task Manager widget.
 
 ![SimpleStats preview](docs/images/simplestats-preview.png)
 
-## What You Get
-- Live stat tiles with a mini trend graph per key (60s history, Task Manager-style crawl-from-right fill).
-- Six dedicated actions — one per device group — with color-themed icons.
-- Per-device selectors (GPU, disk, network interface) where relevant.
-- Alert threshold for percent-based metrics (highlights in red when exceeded).
-- Idle threshold for top-process metrics (shows `IDLE` below your floor to reduce noise).
-- Top-process views with process name and large watermark app icon.
-- Always-on background history: graph data kept alive for 8 hours across page switches.
+## Install
 
-## Quick Start
-1. Install the plugin (`.streamDeckPlugin`) from the [latest release](../../releases/latest).
-2. In Stream Deck, drag one of the six **SimpleStats** actions onto a key:
-   - **CPU**, **GPU**, **Memory**, **Disk**, **Network**, or **System**
-3. Open the Property Inspector and pick a metric.
+Download the `.streamDeckPlugin` file from the [latest release](../../releases/latest) and open it. Stream Deck will install it automatically.
 
-## Configure A Key
-1. **Metric** — Choose the specific metric for that device group.
+## Setup
 
-2. **Source Selector** (shown when needed)
-   `CPU`: optional per-core mode + core number picker.
-   `GPU`: GPU dropdown (multi-GPU systems).
-   `Disk`: disk dropdown + rescan button, or "Auto (Most Active)" to follow the busiest drive.
-   `Network`: interface dropdown + rescan button, or "All" for aggregate.
+Drag any of the six actions onto a key: **CPU**, **GPU**, **Memory**, **Disk**, **Network**, or **System**. Open the property inspector, pick a metric, and you're done. Each key updates every second.
 
-3. **Alert %** (percent metrics only) — Set a threshold to highlight high usage in red.
+Some metrics show additional options:
+- **Source selector** — choose a specific CPU core, GPU, disk drive, or network interface
+- **Alert %** — turn the value red when a percent metric crosses your threshold
+- **Idle below** — show `IDLE` when a top-process metric is below your floor
 
-4. **Idle below** (top-process metrics only) — Show `IDLE` when activity is below your chosen threshold.
-
-## Metrics By Group
+## Metrics
 
 ### CPU
-- `Total Usage`
-- `Usage (Per-Core)` (select core)
-- `Usage (Peak Core)` — shows which core is hottest
-- `Top Process (CPU)`
-- `Clock Frequency` (average GHz)
+| Metric | Description |
+|--------|-------------|
+| Total Usage | Overall CPU load |
+| Usage (Per-Core) | Single core with core picker |
+| Usage (Peak Core) | Hottest core, labeled dynamically (e.g. `PEAK: C7`) |
+| Top Process | Highest CPU consumer with app icon |
+| Clock Frequency | Average speed across all cores (GHz) |
 
-### GPU (NVIDIA, via NVML)
-- `Core Usage`
-- `VRAM (%)`
-- `VRAM (GB)`
-- `Temperature` — toggle °C / °F
-- `Power (W)`
-- `Top Process (Compute)`
-- `Encoder (%)`
-- `Decoder (%)`
-- `PCIe Download`
-- `PCIe Upload`
-- `Core Clock (MHz)`
-- `VRAM Clock (Effective MHz)`
-- `Fan Speed (%)`
+### GPU (NVIDIA)
+| Metric | Description |
+|--------|-------------|
+| Core Usage | GPU utilization % |
+| VRAM (%) | Video memory usage as a percentage |
+| VRAM (GB) | Video memory used in gigabytes |
+| Temperature | GPU temp with °C / °F toggle |
+| Power (W) | Board power draw |
+| Top Process | Highest compute consumer with app icon |
+| Encoder (%) | NVENC hardware encoder load |
+| Decoder (%) | NVDEC hardware decoder load |
+| PCIe Download | GPU bus receive throughput |
+| PCIe Upload | GPU bus transmit throughput |
+| Core Clock (MHz) | Graphics clock speed |
+| VRAM Clock (Effective MHz) | Memory clock at effective data rate |
+| Fan Speed (%) | Fan RPM as a percentage of max |
 
 ### Memory
-- `Usage (%)`
-- `Used (GB)`
-- `Top Process (GB)`
-- `Top Process (%)`
+| Metric | Description |
+|--------|-------------|
+| Usage (%) | Total RAM utilization |
+| Used (GB) | RAM in use |
+| Top Process (GB) | Largest memory consumer (absolute) |
+| Top Process (%) | Largest memory consumer (relative) |
 
 ### Disk
-- `Utilization (Active)` — per-drive active time
-- `Used (%)`
-- `Free (%)`
-- `Read (MB/s)`
-- `Write (MB/s)`
-- `Top Process (I/O)`
+| Metric | Description |
+|--------|-------------|
+| Utilization (Active) | Per-drive active time |
+| Used (%) | Drive capacity consumed |
+| Free (%) | Drive capacity remaining |
+| Read (MB/s) | Read throughput |
+| Write (MB/s) | Write throughput |
+| Top Process (I/O) | Highest disk I/O consumer with app icon |
 
-Disk supports "Auto (Most Active)" to automatically follow the busiest drive, with independent graph history per disk.
+Select a specific drive or use **Auto (Most Active)** to follow the busiest one. Each drive keeps its own graph history independently.
 
 ### Network
-- `Download (Mbps)`
-- `Upload (Mbps)`
-- `Total Transfer` — toggle `60s` / `1h` / `24h`
+| Metric | Description |
+|--------|-------------|
+| Download (Mbps) | Receive rate |
+| Upload (Mbps) | Transmit rate |
+| Total Transfer | Cumulative bytes with 60s / 1h / 24h toggle |
+
+Select a specific interface or **All** for aggregate. Transfer totals persist across Stream Deck restarts.
 
 ### System
-- `Clock (HH:MM:SS)`
-- `Performance` (rolling 60s tick stats, CPU%, heap — for plugin diagnostics)
+| Metric | Description |
+|--------|-------------|
+| Clock | Live clock (HH:MM:SS) |
+| Performance | Plugin diagnostics — tick stats, CPU%, heap |
 
-## Niche Features
-- **Top-process mode**: CPU, memory, GPU compute, and disk I/O metrics show the top process name with a large faded app icon watermark.
-- **Idle gating**: top-process metrics display `IDLE` below your threshold to cut noise.
-- **Transfer windows**: network totals support 60s / 1h / 24h rollups, per-interface or all.
-- **Auto disk selection**: "Auto (Most Active)" follows the busiest drive with per-disk graph history.
-- **Disk space cadence**: `% Used` and `% Free` refresh on a slower cycle (~60s) since capacity changes slowly.
-- **Interface hygiene**: loopback and internal adapters are filtered from network interface choices.
-- **Graph fill gradient**: vertical gradient that's brighter near the line and fades toward the baseline.
-- **N/A for unsupported GPU fields**: advanced GPU metrics show `N/A` when the driver doesn't expose a field, instead of `--`.
-- **Network history persistence**: total transfer history survives Stream Deck restarts (minute-resolution, 24h).
+## Features
 
-## Compatibility
-- Windows `10` or newer (minimum Windows 10 build `10240`)
-- Stream Deck `6.9+`
-- NVIDIA GPU required for GPU metrics (NVML-compatible drivers)
+- **60-second trend graph** on every key — crawls from right like Task Manager
+- **Instant graph backfill** — new keys are pre-populated from cached data, even if they've never been on-screen
+- **Top-process keys** show the process name with a faded app icon watermark
+- **Background history** kept alive for 8 hours across page switches
+- **Auto disk tracking** follows the busiest drive with independent per-disk graphs
+- **Network totals** persist locally across restarts (minute-resolution, 24 hours)
+- **Segmented button toggles** for temperature unit (°C/°F) and transfer period (60s/1h/24h)
 
-If Windows is below the required version, keys show `WIN10+ REQ`.
+## Requirements
+
+- **Windows 10** or newer (build 10240+)
+- **Stream Deck 6.9+**
+- **NVIDIA GPU** with NVML-compatible drivers (for GPU metrics only)
 
 ## Notes
-- All keys update at a 1-second cadence.
-- Network transfer totals are only recorded while the Stream Deck app/plugin is running.
-- Metrics show `--` when data is temporarily unavailable.
-- Network totals can show `0B` until at least two samples exist for the selected window.
-- Graph history resets if the Stream Deck app is fully closed.
+
+- All keys update at a 1-second cadence
+- Metrics show `--` when data is temporarily unavailable
+- Advanced GPU metrics show `N/A` when the driver doesn't expose that field
+- Graph history resets when the Stream Deck app is fully closed
+- Network transfer totals are only recorded while the plugin is running
