@@ -22,3 +22,12 @@ nul
 npm-debug.log
 test-icon-*
 .size-probe/
+
+CLAUDE.md
+AGENTS.md
+docs/CHANGE_HISTORY.md
+docs/RELEASE_NOTES.md
+docs/LAUNCH_TESTING_GUIDE.md
+docs/FUTURE_NET_TOP_PROCESS.md
+docs/internal-pitch.md
+com.crest.simplestats.sdPlugin/perf.log
