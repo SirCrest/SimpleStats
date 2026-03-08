@@ -37,47 +37,46 @@ Six dedicated actions — CPU, GPU, Memory, Disk, Network, and System — each w
 
 ### CPU
 - `Total Usage`
-- `Per-Core Usage` (select core)
-- `Peak Core` (highest core load)
-- `Clock Frequency` (average GHz across all cores)
+- `Usage (Per-Core)` (select core)
+- `Usage (Peak Core)` — shows which core is hottest
 - `Top Process (CPU)`
+- `Clock Frequency` (average GHz)
 
 ### GPU (NVIDIA, via NVML)
 - `Core Usage`
-- `VRAM Usage (%)`
-- `VRAM Used (GB)`
-- `Temperature (C)`
+- `VRAM (%)`
+- `VRAM (GB)`
+- `Temperature` — toggle °C / °F
 - `Power (W)`
-- `Core Clock (MHz)`
-- `Memory Clock (MHz)`
-- `Encoder (NVENC %)`
-- `Decoder (NVDEC %)`
-- `Fan Speed (%)`
-- `PCIe Download (MB/s)`
-- `PCIe Upload (MB/s)`
-- `Throttle Status` (HW THERM, PWR CAP, SYNC, NONE, etc.)
 - `Top Process (Compute)`
+- `Encoder (%)`
+- `Decoder (%)`
+- `PCIe Download`
+- `PCIe Upload`
+- `Core Clock (MHz)`
+- `VRAM Clock (Effective MHz)`
+- `Fan Speed (%)`
 
 ### Memory
-- `Total Usage (%)`
+- `Usage (%)`
 - `Used (GB)`
 - `Top Process (GB)`
 - `Top Process (%)`
 
 ### Disk
 - `Utilization (Active)` — per-drive active time
-- `% Used`
-- `% Free`
-- `Read Throughput (MB/s)`
-- `Write Throughput (MB/s)`
-- `Top Process (I/O MB/s)`
+- `Used (%)`
+- `Free (%)`
+- `Read (MB/s)`
+- `Write (MB/s)`
+- `Top Process (I/O)`
 
 Disk supports "Auto (Most Active)" to automatically follow the busiest drive, with independent graph history per disk.
 
 ### Network
-- `Upload Rate (Mbps)`
-- `Download Rate (Mbps)`
-- `Total Transfer` over last `60 seconds`, `hour`, or `24 hours`
+- `Download (Mbps)`
+- `Upload (Mbps)`
+- `Total Transfer` — toggle `60s` / `1h` / `24h`
 
 ### System
 - `Clock (HH:MM:SS)`

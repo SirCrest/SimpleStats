@@ -1,5 +1,25 @@
 # Change History
 
+## v0.11.2.1 (2026-03-07)
+
+- Fixed property inspector metric selection propagation for Stream Deck `sdpi-*` controls: selecting GPU metrics such as `gpu-encoder` now reaches the action again instead of leaving the key on the old metric
+- Updated shared PI wiring to attach a single `change` listener to the inner native form control (`input` / `select` / `textarea`) instead of the custom element host
+- Added a bounded retry when Stream Deck custom control shadow DOM is not ready on the first frame, preserving the single-writer PI design without reintroducing duplicate settings writes
+- Removed GPU Throttle Status metric from PI dropdown (was already absent from plugin code)
+- Reorganized all PI metric dropdowns: logical grouping with disabled-option separators between basic and advanced metrics
+- Renamed GPU PI metrics for consistency: "VRAM (%)", "VRAM (GB)", "Temperature", "Encoder (%)", "Decoder (%)", "Core Clock (MHz)", "VRAM Clock (Effective MHz)", "Fan Speed (%)"
+- Renamed CPU PI metrics: "Usage (Per-Core)", "Usage (Peak Core)"; moved Top Process above Clock Frequency
+- Renamed Memory PI: "Usage (%)" (dropped "Total"); added separator before top-process metrics
+- Renamed Disk PI: "Used (%)", "Free (%)", "Read (MB/s)", "Write (MB/s)"; added separator before Top Process
+- Renamed Network PI: "Download (Mbps)", "Upload (Mbps)"
+- Added GPU temperature unit toggle (°C / °F) as a segmented button control; graph history persists across unit switches
+- Added segmented button group CSS component (`.btn-group`) for use across all PIs
+- Replaced Network transfer period dropdown with 3-way segmented button toggle (60s / 1h / 24h)
+- `setOptions()` in pi-common.js now supports `{ separator: true }` entries rendered as disabled options
+- GPU clock display now always shows GHz (no more switching between MHz and GHz)
+- CPU Peak Core label now shows which core is hottest (e.g. `PEAK: C7`)
+- Fixed graph history reset when switching temperature unit: `tempUnit` is a display-only setting excluded from the history cache key
+
 ## v0.11.2.0 (2026-03-06)
 
 - Fixed settings feedback loop: `saveDeviceCacheToSettings()` now compares new device cache against existing via `JSON.stringify` and skips `setSettings()` when unchanged, breaking the PI ↔ plugin `didReceiveSettings` cycle

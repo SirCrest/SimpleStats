@@ -2,8 +2,9 @@
   const { initPI, setVisible, PERCENT_METRICS, TOP_PROCESS_METRICS } = window.piCommon;
 
   const METRICS = [
-    { value: "mem-total", label: "Total Usage (%)" },
+    { value: "mem-total", label: "Usage (%)" },
     { value: "mem-used", label: "Used (GB)" },
+    { separator: true },
     { value: "top-mem", label: "Top Process (GB)" },
     { value: "top-mem-pct", label: "Top Process (%)" }
   ];

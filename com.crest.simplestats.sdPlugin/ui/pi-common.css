@@ -98,3 +98,35 @@ select.sdpi-item-value option {
 .refresh-btn:active {
   background-color: #505050;
 }
+
+/* Segmented button group */
+.btn-group {
+  display: flex;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.btn-group__btn {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: #3d3d3d;
+  border: none;
+  color: #999;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  height: 26px;
+  padding: 0 12px;
+  flex: 1;
+  transition: background-color 0.1s, color 0.1s;
+}
+
+.btn-group__btn:hover {
+  background-color: #464646;
+  color: #d8d8d8;
+}
+
+.btn-group__btn.active {
+  background-color: #0078d4;
+  color: #fff;
+}

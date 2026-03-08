@@ -1,5 +1,35 @@
 # Release Notes
 
+## v0.11.2.1
+
+### Bug fixes
+
+- **Fixed GPU metric selection regression in the property inspector**: selecting metrics such as Encoder now applies correctly again instead of leaving the key on the previous metric.
+- **Fixed graph history reset on temperature unit switch**: toggling between °C and °F no longer clears the graph — the unit is a display-only setting excluded from the history cache key.
+
+### UI improvements
+
+- **GPU temperature unit toggle**: segmented button (°C / °F) appears when Temperature is selected. Defaults to °C. Graph stays the same — only the displayed value converts.
+- **Network transfer period toggle**: replaced the dropdown with a 3-way segmented button (60s | 1h | 24h) matching the new button group style.
+- **Reorganized all PI metric dropdowns**: metrics grouped into basic and advanced sections with subtle separators. Most-used metrics appear first.
+- **Renamed metrics for consistency across all PIs**:
+  - GPU: "VRAM (%)", "VRAM (GB)", "Temperature", "Encoder (%)", "Decoder (%)", "Core Clock (MHz)", "VRAM Clock (Effective MHz)"
+  - CPU: "Usage (Per-Core)", "Usage (Peak Core)"
+  - Memory: "Usage (%)" (dropped "Total")
+  - Disk: "Used (%)", "Free (%)", "Read (MB/s)", "Write (MB/s)"
+  - Network: "Download (Mbps)", "Upload (Mbps)"
+- **GPU clock always displays GHz**: no more switching between MHz and GHz depending on value.
+- **CPU Peak Core now shows which core**: label reads `PEAK: C7` instead of just `CPU PEAK`.
+- **Removed GPU Throttle Status** from the metric dropdown.
+
+### Details
+
+- Follow-up to the `v0.11.2.0` PI cleanup: shared PI input wiring now binds once to the real native `input`/`select`/`textarea` inside `sdpi-components` rather than relying on the custom element host to re-dispatch `change`.
+- Added a short retry window while the Stream Deck custom control shadow DOM finishes rendering, so dropdowns and numeric fields still attach exactly one listener without reviving the old duplicate-write/settings-race behavior.
+- Added segmented button group CSS component (`.btn-group`) reusable across all property inspectors.
+- `setOptions()` in pi-common.js now supports `{ separator: true }` entries for dropdown grouping.
+- `tempUnit` setting added to base-metric.ts; stored as `"C"` or `"F"`, defaults to `"C"`. Graph data always stored in Celsius internally.
+
 ## v0.11.2.0
 
 ### Bug fixes

@@ -1,9 +1,9 @@
 (() => {
-  const { initPI, setSettings, setVisible, wireInput, wirePlainListener, PERCENT_METRICS } = window.piCommon;
+  const { initPI, setSettings, setVisible, wirePlainListener, PERCENT_METRICS } = window.piCommon;
 
   const METRICS = [
-    { value: "net-down", label: "Download Rate" },
-    { value: "net-up", label: "Upload Rate" },
+    { value: "net-down", label: "Download (Mbps)" },
+    { value: "net-up", label: "Upload (Mbps)" },
     { value: "net-total", label: "Total Transfer" }
   ];
 
@@ -24,17 +24,28 @@
     setVisible(document.getElementById("threshold-note"), false);
   }
 
+  function setActivePeriod(value) {
+    const group = document.getElementById("net-period");
+    if (!group) return;
+    const strVal = String(value);
+    for (const btn of group.querySelectorAll(".btn-group__btn")) {
+      btn.classList.toggle("active", btn.dataset.value === strVal);
+    }
+  }
+
   async function handleNetChange(event) {
     if (window.piCommon.suppressEvents) return;
     const netIface = window.piCommon.readValueFromEvent(event, document.getElementById("net")?.value ?? "");
     await setSettings({ netIface });
   }
 
-  async function handleNetPeriodChange(event) {
+  async function handleNetPeriodClick(event) {
     if (window.piCommon.suppressEvents) return;
-    const raw = window.piCommon.readValueFromEvent(event, document.getElementById("net-period")?.value ?? "60");
-    const val = parseInt(raw, 10);
+    const btn = event.target.closest(".btn-group__btn");
+    if (!btn) return;
+    const val = parseInt(btn.dataset.value, 10);
     if (Number.isFinite(val) && val > 0) {
+      setActivePeriod(val);
       await setSettings({ netPeriodSec: val });
     }
   }
@@ -51,17 +62,14 @@
   function wireDeviceControls() {
     const netSelect = document.getElementById("net");
     const rescanEl = document.getElementById("rescan-interfaces");
-    const netPeriodEl = document.getElementById("net-period");
+    const netPeriodGroup = document.getElementById("net-period");
     if (netSelect) wirePlainListener(netSelect, "change", handleNetChange);
     if (rescanEl) wirePlainListener(rescanEl, "click", handleRescanInterfaces);
-    if (netPeriodEl) wireInput(netPeriodEl, handleNetPeriodChange);
+    if (netPeriodGroup) wirePlainListener(netPeriodGroup, "click", handleNetPeriodClick);
   }
 
   function applyDeviceSettings(settings) {
-    const netPeriodEl = document.getElementById("net-period");
-    if (netPeriodEl && settings && settings.netPeriodSec !== undefined) {
-      netPeriodEl.value = String(settings.netPeriodSec);
-    }
+    setActivePeriod(settings?.netPeriodSec ?? 60);
   }
 
   initPI({

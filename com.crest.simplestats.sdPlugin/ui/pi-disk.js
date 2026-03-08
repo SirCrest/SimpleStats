@@ -3,10 +3,11 @@
 
   const METRICS = [
     { value: "disk-activity", label: "Utilization (Active)" },
-    { value: "disk-used", label: "% Used" },
-    { value: "disk-free", label: "% Free" },
-    { value: "disk-read", label: "Read Throughput" },
-    { value: "disk-write", label: "Write Throughput" },
+    { value: "disk-used", label: "Used (%)" },
+    { value: "disk-free", label: "Free (%)" },
+    { value: "disk-read", label: "Read (MB/s)" },
+    { value: "disk-write", label: "Write (MB/s)" },
+    { separator: true },
     { value: "top-disk", label: "Top Process (I/O)" }
   ];
 

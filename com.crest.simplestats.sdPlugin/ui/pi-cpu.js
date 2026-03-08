@@ -4,10 +4,11 @@
 
   const METRICS = [
     { value: "cpu-total", label: "Total Usage" },
-    { value: "cpu-core", label: "Per-Core Usage" },
-    { value: "cpu-peak", label: "Peak Core" },
-    { value: "cpu-freq", label: "Clock Frequency" },
-    { value: "top-cpu", label: "Top Process (CPU)" }
+    { value: "cpu-core", label: "Usage (Per-Core)" },
+    { value: "cpu-peak", label: "Usage (Peak Core)" },
+    { value: "top-cpu", label: "Top Process (CPU)" },
+    { separator: true },
+    { value: "cpu-freq", label: "Clock Frequency" }
   ];
 
   const DEFAULT_METRIC = "cpu-total";

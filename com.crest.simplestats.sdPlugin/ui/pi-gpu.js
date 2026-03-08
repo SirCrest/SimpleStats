@@ -3,19 +3,19 @@
 
   const METRICS = [
     { value: "gpu-load", label: "Core Usage" },
-    { value: "gpu-vram", label: "VRAM Usage (%)" },
-    { value: "gpu-vram-used", label: "VRAM Used (GB)" },
+    { value: "gpu-vram", label: "VRAM (%)" },
+    { value: "gpu-vram-used", label: "VRAM (GB)" },
     { value: "gpu-temp", label: "Temperature" },
     { value: "gpu-power", label: "Power (W)" },
-    { value: "gpu-clock", label: "GPU Clock (MHz)" },
-    { value: "gpu-mem-clock", label: "Memory Clock (MHz)" },
-    { value: "gpu-encoder", label: "Encoder (NVENC %)" },
-    { value: "gpu-decoder", label: "Decoder (NVDEC %)" },
-    { value: "gpu-fan", label: "Fan Speed (%)" },
+    { value: "gpu-top-compute", label: "Top Process (Compute)" },
+    { separator: true },
+    { value: "gpu-encoder", label: "Encoder (%)" },
+    { value: "gpu-decoder", label: "Decoder (%)" },
     { value: "gpu-pcie-rx", label: "PCIe Download" },
     { value: "gpu-pcie-tx", label: "PCIe Upload" },
-    { value: "gpu-throttle", label: "Throttle Status" },
-    { value: "gpu-top-compute", label: "Top Process (Compute)" }
+    { value: "gpu-clock", label: "Core Clock (MHz)" },
+    { value: "gpu-mem-clock", label: "VRAM Clock (Effective MHz)" },
+    { value: "gpu-fan", label: "Fan Speed (%)" }
   ];
 
   const DEFAULT_METRIC = "gpu-load";
@@ -28,6 +28,7 @@
 
   function updateVisibility(metric) {
     setVisible(document.getElementById("gpu-row"), true);
+    setVisible(document.getElementById("temp-unit-row"), metric === "gpu-temp");
     const isPercent = PERCENT_METRICS.has(metric);
     setVisible(document.getElementById("warn-threshold-row"), isPercent);
     setVisible(document.getElementById("threshold-note"), isPercent);
@@ -42,9 +43,32 @@
     await setSettings({ gpuIndex });
   }
 
+  function setActiveTempUnit(value) {
+    const group = document.getElementById("temp-unit");
+    if (!group) return;
+    for (const btn of group.querySelectorAll(".btn-group__btn")) {
+      btn.classList.toggle("active", btn.dataset.value === value);
+    }
+  }
+
+  async function handleTempUnitClick(event) {
+    if (window.piCommon.suppressEvents) return;
+    const btn = event.target.closest(".btn-group__btn");
+    if (!btn) return;
+    const tempUnit = btn.dataset.value;
+    setActiveTempUnit(tempUnit);
+    await setSettings({ tempUnit });
+  }
+
   function wireDeviceControls() {
     const gpuSelect = document.getElementById("gpu");
     if (gpuSelect) wirePlainListener(gpuSelect, "change", handleGpuChange);
+    const tempUnitGroup = document.getElementById("temp-unit");
+    if (tempUnitGroup) wirePlainListener(tempUnitGroup, "click", handleTempUnitClick);
+  }
+
+  function applyDeviceSettings(settings) {
+    setActiveTempUnit(settings.tempUnit === "F" ? "F" : "C");
   }
 
   initPI({
@@ -53,6 +77,7 @@
     defaultMetric: DEFAULT_METRIC,
     normalizeSettings,
     updateVisibility,
-    wireDeviceControls
+    wireDeviceControls,
+    applyDeviceSettings
   });
 })();

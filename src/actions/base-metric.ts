@@ -185,6 +185,7 @@ export type Settings = {
   pollIntervalSec?: number | string;
   warnThreshold?: number | string;
   topThreshold?: number | string;
+  tempUnit?: string;
 };
 
 type NormalizedSettings = {
@@ -198,6 +199,7 @@ type NormalizedSettings = {
   netPeriodSec: number;
   warnThreshold: number;
   topThreshold: number;
+  tempUnit: "C" | "F";
 };
 
 type ActionState = {
@@ -298,7 +300,8 @@ const DEFAULT_SETTINGS: NormalizedSettings = {
   netIface: "",
   netPeriodSec: 60,
   warnThreshold: 0,
-  topThreshold: 0
+  topThreshold: 0,
+  tempUnit: "C"
 };
 
 const KEY_SIZE = 72;
@@ -922,7 +925,8 @@ function normalizeSettings(settings: Settings | undefined): NormalizedSettings {
     netIface: typeof settings?.netIface === "string" ? settings.netIface : DEFAULT_SETTINGS.netIface,
     netPeriodSec: toInt(settings?.netPeriodSec, DEFAULT_SETTINGS.netPeriodSec),
     warnThreshold: Math.max(0, Math.min(100, toInt(settings?.warnThreshold, DEFAULT_SETTINGS.warnThreshold))),
-    topThreshold: Math.max(0, Math.min(metric === "top-disk" ? 10000 : 100, toInt(settings?.topThreshold, DEFAULT_SETTINGS.topThreshold)))
+    topThreshold: Math.max(0, Math.min(metric === "top-disk" ? 10000 : 100, toInt(settings?.topThreshold, DEFAULT_SETTINGS.topThreshold))),
+    tempUnit: settings?.tempUnit === "F" ? "F" : "C"
   };
 }
 
@@ -1006,8 +1010,9 @@ function formatPercent(value: number | null): string {
   return `${Math.round(value)}%`;
 }
 
-function formatTempC(value: number | null): string {
+function formatTemp(value: number | null, unit: "C" | "F"): string {
   if (value === null || !Number.isFinite(value)) return "--";
+  if (unit === "F") return `${Math.round(value * 9 / 5 + 32)}°F`;
   return `${Math.round(value)}°C`;
 }
 
@@ -1045,10 +1050,9 @@ function formatClock(value: Date): string {
   return `${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}`;
 }
 
-function formatFreqMHz(value: number | null): string {
+function formatFreqGHz(value: number | null): string {
   if (value === null || !Number.isFinite(value)) return "--";
-  if (value >= 1000) return `${(value / 1000).toFixed(2)}GHz`;
-  return `${Math.round(value)}MHz`;
+  return `${(value / 1000).toFixed(2)}GHz`;
 }
 
 function formatPcieRate(kbps: number | null): string {
@@ -1236,9 +1240,13 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "cpu-peak": {
       const cores = snapshot.cpu.cores || [];
-      const peak = cores.length > 0 ? Math.max(...cores) : null;
+      let peak: number | null = null;
+      let peakIndex = -1;
+      for (let i = 0; i < cores.length; i++) {
+        if (peak === null || cores[i] > peak) { peak = cores[i]; peakIndex = i; }
+      }
       return {
-        label: "CPU PEAK",
+        label: peakIndex >= 0 ? `PEAK: C${peakIndex + 1}` : "CPU PEAK",
         value: formatPercent(peak),
         graphValue: peak,
         graphMax: 100,
@@ -1250,7 +1258,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       const freq = snapshot.cpu.frequencyMhz;
       return {
         label: "CPU FREQ",
-        value: formatFreqMHz(freq),
+        value: formatFreqGHz(freq),
         graphValue: freq,
         graphMax: null,
         graphMinMax: null,
@@ -1297,10 +1305,11 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
     }
     case "gpu-temp": {
       const gpu = selectGpu(snapshot, settings.gpuIndex);
+      const tempC = gpu?.tempC ?? null;
       return {
         label: gpu && gpu.index > 0 ? `GPU TEMP ${gpu.index + 1}` : "GPU TEMP",
-        value: formatTempC(gpu?.tempC ?? null),
-        graphValue: gpu?.tempC ?? null,
+        value: formatTemp(tempC, settings.tempUnit),
+        graphValue: tempC,
         graphMax: 100,
         graphMinMax: null,
         graphMin: 20
@@ -1322,7 +1331,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       const clockMHz = gpu?.clockMHz ?? null;
       return {
         label: labelWithIndex("GPU CLK", gpu ? gpu.index : 0),
-        value: formatGpuAdvancedMetric(gpu, clockMHz, formatFreqMHz),
+        value: formatGpuAdvancedMetric(gpu, clockMHz, formatFreqGHz),
         graphValue: clockMHz,
         graphMax: null,
         graphMinMax: null,
@@ -1334,7 +1343,7 @@ function buildMetricDisplay(snapshot: StatsSnapshot, settings: NormalizedSetting
       const memClockMHz = gpu?.memClockMHz ?? null;
       return {
         label: labelWithIndex("GPU MCLK", gpu ? gpu.index : 0),
-        value: formatGpuAdvancedMetric(gpu, memClockMHz, formatFreqMHz),
+        value: formatGpuAdvancedMetric(gpu, memClockMHz, formatFreqGHz),
         graphValue: memClockMHz,
         graphMax: null,
         graphMinMax: null,
@@ -1940,9 +1949,11 @@ export class BaseMetricAction extends SingletonAction<Settings> {
       return { state, changed: true };
     }
 
-    const changed = existing.settingsKey !== nextKey;
+    const dataChanged = existing.settingsKey !== nextKey;
+    const displayChanged = existing.settings.tempUnit !== normalized.tempUnit;
+    const changed = dataChanged || displayChanged;
     const prevSettings = existing.settings;
-    if (existing.settingsKey !== nextKey) {
+    if (dataChanged) {
       existing.settings = normalized;
       existing.settingsKey = nextKey;
       existing.diskHistories = undefined;
@@ -1973,6 +1984,7 @@ export class BaseMetricAction extends SingletonAction<Settings> {
         to: normalized
       });
     }
+    existing.settings = normalized;
     existing.settingsReady = true;
     if (!isDiskSpaceMetric(existing.settings)) {
       existing.diskSpaceWarmupComplete = false;

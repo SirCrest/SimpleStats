@@ -100,7 +100,7 @@ const TOP_PROCESS_METRICS = new Set([
 const SETTINGS_KEYS = [
   "group", "metric", "cpuPerCore", "cpuCore", "gpuIndex",
   "diskId", "netIface", "netPeriodSec",
-  "warnThreshold", "topThreshold"
+  "warnThreshold", "topThreshold", "tempUnit"
 ];
 
 let currentSettings = {};
@@ -162,6 +162,13 @@ function requestDataSources(group) {
 function setOptions(select, options) {
   while (select.firstChild) select.removeChild(select.firstChild);
   for (const option of options) {
+    if (option.separator) {
+      const node = document.createElement("option");
+      node.disabled = true;
+      node.textContent = "───────────";
+      select.appendChild(node);
+      continue;
+    }
     const node = document.createElement("option");
     node.value = option.value;
     node.textContent = option.label;
@@ -210,7 +217,8 @@ function readPositiveInt(value, fallback) {
 }
 
 // ─── Wiring helpers ──────────────────────────────────────────────────────
-const wiredHosts = new WeakSet();
+const wiredInputTargets = new WeakMap();
+const wiredInputRetries = new WeakMap();
 const wiredButtonTargets = new WeakMap();
 const wiredPlainListeners = new WeakMap();
 
@@ -222,13 +230,50 @@ function getInnerButton(element) {
   return root.querySelector("button");
 }
 
+function isNativeFormControl(element) {
+  return element instanceof HTMLInputElement ||
+    element instanceof HTMLSelectElement ||
+    element instanceof HTMLTextAreaElement;
+}
+
+function getInnerInputTarget(element) {
+  if (!element) return null;
+  if (isNativeFormControl(element)) return element;
+  if (element.focusElement instanceof HTMLElement) return element.focusElement;
+  const root = element.shadowRoot;
+  if (!root) return null;
+  return root.querySelector("input, select, textarea");
+}
+
+function shouldRetryInputTarget(element, target) {
+  return target === element &&
+    !isNativeFormControl(element) &&
+    typeof element.tagName === "string" &&
+    element.tagName.startsWith("SDPI-");
+}
+
 function wireInput(element, handler) {
   if (!element) return;
-  if (!wiredHosts.has(element)) {
-    // Bind once to the host element so Stream Deck's custom controls do not
-    // double-fire through both the wrapper and their inner shadow DOM input.
-    element.addEventListener("change", handler);
-    wiredHosts.add(element);
+  const target = getInnerInputTarget(element) || element;
+  const previous = wiredInputTargets.get(element);
+  if (previous && previous !== target) {
+    previous.removeEventListener("change", handler);
+  }
+  if (previous !== target) {
+    // Bind once to the real native control when sdpi-components render one.
+    // This keeps a single change path without depending on the host to
+    // re-dispatch events from shadow DOM.
+    target.addEventListener("change", handler);
+    wiredInputTargets.set(element, target);
+  }
+  if (shouldRetryInputTarget(element, target)) {
+    const attempt = wiredInputRetries.get(element) || 0;
+    if (attempt < 10) {
+      wiredInputRetries.set(element, attempt + 1);
+      requestAnimationFrame(() => wireInput(element, handler));
+    }
+  } else {
+    wiredInputRetries.delete(element);
   }
 }
 
