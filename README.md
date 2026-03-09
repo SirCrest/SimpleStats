@@ -89,6 +89,7 @@ Select a specific interface or **All** for aggregate. Transfer totals persist ac
 - **Auto disk tracking** follows the busiest drive with independent per-disk graphs
 - **Network totals** persist locally across restarts (minute-resolution, 24 hours)
 - **Segmented button toggles** for temperature unit (°C/°F) and transfer period (60s/1h/24h)
+- **Lightweight** — ~5 MB install, no external dependencies or admin privileges
 
 ## Requirements
 

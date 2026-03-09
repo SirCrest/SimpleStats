@@ -5,9 +5,14 @@ using System.Net.NetworkInformation;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 
 namespace SimpleStatsHelper;
+
+[JsonSerializable(typeof(NetPayload))]
+[JsonSourceGenerationOptions(WriteIndented = false)]
+internal partial class AppJsonContext : JsonSerializerContext { }
 
 public sealed record NetItem(
   string iface,
@@ -1565,7 +1570,7 @@ internal static class Program
       }
     }
 
-    var options = new JsonSerializerOptions { WriteIndented = false };
+    var jsonContext = AppJsonContext.Default;
     using var cts = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) =>
     {
@@ -1832,7 +1837,7 @@ internal static class Program
       try
       {
         var payload = new NetPayload(now, items, disks, cpu, diskPerf, mem, gpus, topProcess);
-        Console.WriteLine(JsonSerializer.Serialize(payload, options));
+        Console.WriteLine(JsonSerializer.Serialize(payload, jsonContext.NetPayload));
       }
       catch (Exception ex)
       {

@@ -101,11 +101,7 @@ try {
   Copy-Item (Join-Path $pluginDir "libs\*") (Join-Path $packageRoot "libs") -Recurse -Force
   Copy-Item (Join-Path $pluginDir "ui\*") (Join-Path $packageRoot "ui") -Recurse -Force
   Copy-Item (Join-Path $pluginDir "bin\plugin.js") (Join-Path $packageRoot "bin\plugin.js") -Force
-  Copy-Item (Join-Path $pluginDir "bin\plugin.js.map") (Join-Path $packageRoot "bin\plugin.js.map") -Force
   Copy-Item $helperExe (Join-Path $packageRoot "bin\SimpleStatsHelper.exe") -Force
-  if (Test-Path $helperPdb) {
-    Copy-Item $helperPdb (Join-Path $packageRoot "bin\SimpleStatsHelper.pdb") -Force
-  }
 
   $zipPath = Join-Path $distDir ("SimpleStats-v$manifestVersion-" + [Guid]::NewGuid().ToString("N") + ".zip")
   $assetPath = Join-Path $distDir "SimpleStats-v$manifestVersion.streamDeckPlugin"
